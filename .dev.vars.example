@@ -1,0 +1,4 @@
+# Copy to .dev.vars for local development.
+# Generate with: openssl rand -base64 32
+
+COOKIE_SECRET=replace-with-32-random-bytes-base64

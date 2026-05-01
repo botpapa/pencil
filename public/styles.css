@@ -1,0 +1,743 @@
+/*  pencil.md — design system
+ *  Paper + ink. Serif body, mono chrome. Single accent (pencil yellow).
+ *  No rounded corners except buttons (2px). No shadows. No gradients.
+ */
+
+:root {
+  /* paper */
+  --bg: #FAF7F2;
+  --bg-soft: #F2EEE6;
+  --ink: #1A1714;
+  --ink-soft: #4A453E;
+  --rule: #D9D2C4;
+  --accent: #F4B400;
+  --accent-ink: #2A1F00;
+  --danger: #B83A28;
+
+  /* type */
+  --font-serif: "Newsreader", "Source Serif 4", "Iowan Old Style", Georgia, serif;
+  --font-mono: "JetBrains Mono", "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-sans: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+
+  /* scale */
+  --t-base: 18px;
+  --t-lh: 1.65;
+  --measure: clamp(38rem, 75vw, 72rem);
+  --pad: 1.5rem;
+  --rule-w: 1px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14110D;
+    --bg-soft: #1E1A14;
+    --ink: #ECE6D8;
+    --ink-soft: #A39C8C;
+    --rule: #2C271E;
+    --accent: #F4B400;
+    --accent-ink: #14110D;
+    --danger: #E5705F;
+  }
+}
+
+/* ---------- self-hosted fonts (optional; falls back to system if absent) ---------- */
+
+@font-face {
+  font-family: "Newsreader";
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url("/fonts/newsreader-variable.woff2") format("woff2-variations");
+}
+@font-face {
+  font-family: "Newsreader";
+  font-style: italic;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url("/fonts/newsreader-italic-variable.woff2") format("woff2-variations");
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url("/fonts/jetbrains-mono-variable.woff2") format("woff2-variations");
+}
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url("/fonts/inter-variable.woff2") format("woff2-variations");
+}
+
+/* ---------- reset ---------- */
+
+*, *::before, *::after { box-sizing: border-box; }
+html, body {
+  margin: 0;
+  padding: 0;
+  /* Page itself never scrolls horizontally — only inner blocks (pre, table)
+   * are allowed to overflow sideways. `clip` (vs `hidden`) doesn't establish
+   * a scroll container, so the sticky topbar still pins to the viewport. */
+  max-width: 100%;
+  overflow-x: clip;
+}
+html {
+  -webkit-text-size-adjust: 100%;
+  /* Kill iOS Safari's gray/blue tap-overlay flash on touch. Cascades to all
+   * descendants so containers don't flash either. */
+  -webkit-tap-highlight-color: transparent;
+}
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-serif);
+  font-size: var(--t-base);
+  line-height: var(--t-lh);
+  font-feature-settings: "kern", "liga", "onum";
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+::selection { background: var(--accent); color: var(--accent-ink); }
+
+button, input, textarea, select { font: inherit; color: inherit; }
+button { cursor: pointer; }
+
+a {
+  color: var(--ink);
+  text-decoration-color: var(--rule);
+  text-underline-offset: 0.18em;
+  text-decoration-thickness: 1px;
+}
+a:hover {
+  text-decoration-color: var(--accent);
+}
+a:focus-visible, button:focus-visible, textarea:focus-visible, input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ---------- layout primitives ---------- */
+
+.app {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+.main {
+  flex: 1;
+  width: 100%;
+}
+
+.footer {
+  border-top: var(--rule-w) solid var(--rule);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--ink-soft);
+  padding: 0.35rem var(--pad);
+  text-align: center;
+}
+
+/* ---------- buttons ---------- */
+
+.btn {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 500;
+  background: var(--bg-soft);
+  border: var(--rule-w) solid var(--rule);
+  color: var(--ink);
+  padding: 0.45rem 0.85rem;
+  border-radius: 2px;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  transition: border-color 80ms linear, background 80ms linear;
+}
+.btn:hover { border-color: var(--ink-soft); }
+.btn:active { background: var(--rule); }
+.btn--primary {
+  background: var(--ink);
+  color: var(--bg);
+  border-color: var(--ink);
+}
+.btn--primary:hover { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.btn:disabled { opacity: 0.45; cursor: not-allowed; }
+/* Suppress the primary's accent flip on hover while disabled. */
+.btn--primary:disabled:hover {
+  background: var(--ink);
+  color: var(--bg);
+  border-color: var(--ink);
+}
+.btn--ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--ink-soft);
+}
+.btn--ghost:hover { color: var(--ink); }
+
+/* ---------- reader (full-page preview) ---------- */
+
+.reader {
+  max-width: var(--measure);
+  margin: 0 auto;
+  padding: 4rem var(--pad) 6rem;
+}
+
+.reader h1.title {
+  font-family: var(--font-serif);
+  font-weight: 600;
+  font-size: clamp(2rem, 4vw, 2.6rem);
+  line-height: 1.15;
+  margin: 0 0 0.4rem;
+  letter-spacing: -0.01em;
+}
+.reader .meta {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--ink-soft);
+  margin-bottom: 2.5rem;
+  border-bottom: var(--rule-w) solid var(--rule);
+  padding-bottom: 0.8rem;
+}
+
+.prose {
+  /* Break long URLs / identifiers so they don't push the page wider. */
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.prose p { margin: 1em 0; }
+.prose h1, .prose h2, .prose h3, .prose h4, .prose h5, .prose h6 {
+  position: relative;
+  font-family: var(--font-serif);
+  font-weight: 600;
+  line-height: 1.25;
+  margin: 1.6em 0 0.6em;
+  letter-spacing: -0.005em;
+}
+.prose h1 { font-size: 1.7em; }
+.prose h2 { font-size: 1.4em; border-bottom: var(--rule-w) solid var(--rule); padding-bottom: 0.2em; }
+.prose h3 { font-size: 1.2em; }
+.prose h4 { font-size: 1.05em; }
+.prose h5, .prose h6 { font-size: 1em; color: var(--ink-soft); }
+
+/* Hashtag permalink injected as the first child of every heading by
+ * markdown-it-anchor's linkInsideHeader. Hidden by default; revealed at
+ * 50% on heading hover/focus and 100% when the cursor is on the # itself.
+ * Mobile browsers fire :hover on tap, so the same rule covers tap-reveal
+ * without any JS. Click handler in src/client/reader.ts intercepts the
+ * navigation and copies the section URL instead. */
+.prose .header-anchor {
+  position: absolute;
+  left: -1.1em;
+  top: 0;
+  bottom: 0;
+  display: inline-flex;
+  align-items: center;
+  padding-right: 0.4em;
+  font-size: 0.65em;
+  font-weight: 400;
+  color: var(--ink-soft);
+  text-decoration: none;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+.prose h1:hover > .header-anchor,
+.prose h2:hover > .header-anchor,
+.prose h3:hover > .header-anchor,
+.prose h4:hover > .header-anchor,
+.prose h5:hover > .header-anchor,
+.prose h6:hover > .header-anchor,
+.prose .header-anchor:focus-visible {
+  opacity: 0.5;
+}
+.prose .header-anchor:hover {
+  opacity: 1;
+}
+
+.prose a { color: var(--ink); text-decoration-color: var(--accent); }
+.prose a:hover { text-decoration-thickness: 2px; }
+
+.prose ul, .prose ol { padding-left: 1.4em; margin: 1em 0; }
+.prose li { margin: 0.3em 0; }
+.prose li input[type="checkbox"] {
+  margin-right: 0.4em;
+  accent-color: var(--accent);
+  transform: translateY(1px);
+}
+
+.prose blockquote {
+  margin: 1.5em 0;
+  padding: 0.2em 1em;
+  border-left: 3px solid var(--accent);
+  color: var(--ink-soft);
+  font-style: italic;
+}
+
+.prose code {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  background: var(--bg-soft);
+  padding: 0.12em 0.35em;
+  border-radius: 2px;
+  border: var(--rule-w) solid var(--rule);
+}
+.prose pre {
+  font-family: var(--font-mono);
+  background: var(--bg-soft);
+  border: var(--rule-w) solid var(--rule);
+  padding: 1em 1.2em;
+  border-radius: 2px;
+  overflow-x: auto;
+  max-width: 100%;
+  font-size: 0.9em;
+  line-height: 1.55;
+  margin: 1.5em 0;
+}
+.prose pre code {
+  /* Inside <pre> the content scrolls horizontally; don't let our global
+   * break-word rules collapse the layout. */
+  overflow-wrap: normal;
+  word-break: normal;
+  white-space: pre;
+}
+.prose pre code {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: inherit;
+}
+
+.prose hr {
+  border: none;
+  border-top: var(--rule-w) solid var(--rule);
+  margin: 2.5em 0;
+}
+
+/* Tables are wrapped in <div class="table-wrap"> at render time (see
+ * src/lib/markdown.ts) so the wrapper owns horizontal overflow while the
+ * <table> keeps its natural `display: table` layout. The margin lives on
+ * the wrapper so the table itself doesn't double up. */
+.prose .table-wrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  max-width: 100%;
+  margin: 1.5em 0;
+}
+.prose .table-wrap > table {
+  margin: 0;
+  /* Explicit auto so cell `max-width` caps below are honored when stacked
+   * rules get confusing. Auto is the default for <table>. */
+  table-layout: auto;
+  /* Override the global `.prose table { width: 100% }` so tables inside the
+   * scroll wrapper size by content. Combined with the per-cell min/max below
+   * this gives a comfortable column floor while letting wide tables overflow
+   * (and the wrapper scroll horizontally) instead of cramming into the
+   * viewport. */
+  width: auto;
+}
+.prose table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 1.5em 0;
+  font-size: 0.95em;
+}
+/* Per-column floor + cap: `min-width` keeps short cells (numbers, "yes",
+ * dates) from collapsing to one-character columns; `max-width` makes long
+ * cells wrap multi-line instead of stretching the column. The wrapper
+ * scrolls horizontally for tables that exceed the viewport. */
+.prose .table-wrap th,
+.prose .table-wrap td {
+  min-width: 8rem;
+  max-width: 20vw;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+@media (max-width: 720px) {
+  .prose .table-wrap th,
+  .prose .table-wrap td {
+    min-width: 7rem;
+    max-width: 70vw;
+  }
+}
+.prose th, .prose td {
+  text-align: left;
+  padding: 0.55em 0.8em;
+  border: var(--rule-w) solid var(--rule);
+}
+.prose th { background: var(--bg-soft); font-weight: 600; }
+
+.prose img {
+  max-width: 100%;
+  height: auto;
+  display: block;
+  margin: 1.5em auto;
+  border: var(--rule-w) solid var(--rule);
+}
+
+.prose mark { background: var(--accent); color: var(--accent-ink); padding: 0 0.15em; }
+.prose del { color: var(--ink-soft); }
+
+.prose .footnotes {
+  margin-top: 3em;
+  padding-top: 1.5em;
+  border-top: var(--rule-w) solid var(--rule);
+  font-size: 0.9em;
+}
+.prose .footnotes ol { padding-left: 1.2em; }
+.prose .footnote-ref a, .prose .footnote-backref { text-decoration: none; color: var(--accent-ink); background: var(--accent); padding: 0 0.3em; border-radius: 2px; font-size: 0.8em; }
+
+/* ToC */
+.toc {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  background: var(--bg-soft);
+  border: var(--rule-w) solid var(--rule);
+  padding: 1em 1.5em;
+  margin: 2em 0;
+}
+.toc ul { padding-left: 1em; margin: 0.4em 0; }
+
+/* highlight.js token colors — tuned for paper background */
+.hljs-keyword, .hljs-selector-tag, .hljs-built_in, .hljs-name, .hljs-tag { color: #8C2A1A; }
+.hljs-string, .hljs-title, .hljs-section, .hljs-attribute, .hljs-literal, .hljs-template-tag, .hljs-template-variable, .hljs-type, .hljs-addition { color: #4A6B12; }
+.hljs-comment, .hljs-quote { color: var(--ink-soft); font-style: italic; }
+.hljs-number, .hljs-symbol, .hljs-bullet, .hljs-link, .hljs-meta, .hljs-selector-attr, .hljs-selector-pseudo { color: #8B5A0B; }
+.hljs-doctag, .hljs-strong { font-weight: 700; }
+.hljs-emphasis { font-style: italic; }
+@media (prefers-color-scheme: dark) {
+  .hljs-keyword, .hljs-selector-tag, .hljs-built_in, .hljs-name, .hljs-tag { color: #F2A998; }
+  .hljs-string, .hljs-title, .hljs-section, .hljs-attribute, .hljs-literal, .hljs-template-tag, .hljs-template-variable, .hljs-type, .hljs-addition { color: #BFD68A; }
+  .hljs-number, .hljs-symbol, .hljs-bullet, .hljs-link, .hljs-meta, .hljs-selector-attr, .hljs-selector-pseudo { color: #F4B97D; }
+}
+
+/* ---------- reader corner actions (owner-only) ----------
+ * Owner-only chip row in the top-right of the reader: copy-link icon button
+ * paired with the edit button. The whole row is omitted from the markup for
+ * non-owners (see src/views/reader.ts), so non-owner readers never see either
+ * control. No wrapping card — each control supplies its own background and
+ * border so they can sit free-floating on the page. */
+.corner-actions {
+  position: fixed;
+  /* env() keeps the corner clear of the iOS notch on devices using
+   * viewport-fit=cover. 0px fallback for browsers without safe-area support. */
+  top: calc(0.75rem + env(safe-area-inset-top, 0px));
+  right: calc(0.75rem + env(safe-area-inset-right, 0px));
+  z-index: 50;
+  display: flex;
+  /* Stretch every chip to the row's tallest member so the icon buttons match
+   * the text-driven height of the adjacent .btn--primary edit button. */
+  align-items: stretch;
+  gap: 0.5rem;
+}
+
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  height: auto;
+  padding: 0 0.7rem;
+  background: var(--bg-soft);
+  border: var(--rule-w) solid var(--rule);
+  border-radius: 2px;
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  cursor: pointer;
+  text-decoration: none;
+  transition: background 100ms ease, color 100ms ease, border-color 100ms ease;
+}
+.icon-btn:hover { border-color: var(--ink-soft); }
+.icon-btn svg { width: 16px; height: 16px; display: block; }
+
+/* default state: link icon visible, check + text hidden */
+.icon-btn .icon-check { display: none; }
+.icon-btn .copied-text { display: none; }
+
+/* copied state */
+.icon-btn[data-copied="true"] {
+  background: var(--accent);
+  color: var(--accent-ink);
+  border-color: var(--accent);
+}
+.icon-btn[data-copied="true"] .icon-link { display: none; }
+.icon-btn[data-copied="true"] .icon-check { display: block; }
+.icon-btn[data-copied="true"] .copied-text { display: inline; }
+
+/* On mobile bump the icon button to a comfortable touch target (44x44 is
+ * the WCAG AAA minimum and what iOS HIG / Material both recommend). The
+ * row's stretch alignment (always-on now) grows the icon buttons to match
+ * the adjacent .btn--primary's text-driven height on every viewport. */
+@media (max-width: 720px) {
+  .icon-btn {
+    min-width: 44px;
+    min-height: 44px;
+  }
+  .icon-btn svg { width: 18px; height: 18px; }
+}
+
+/* ---------- editor ---------- */
+
+/* On editor pages the topbar is omitted; let .main fill the viewport so the
+ * editor shell can stretch with flex rather than a magic viewport calc. */
+.page-editor .main {
+  display: flex;
+  flex-direction: column;
+}
+
+.editor-shell {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  max-width: 100%;
+}
+
+/* Floating action group: pinned to the viewport top-right, sitting directly
+ * on the content (no card/overlay). Each button carries its own background
+ * and border via .btn / .btn--primary, so the group is purely a positioning
+ * wrapper. Stays put while the page or textarea scroll. */
+.editor-actions {
+  position: fixed;
+  /* Mirror corner-actions: dodge iOS notch + landscape safe-area-right. */
+  top: calc(0.75rem + env(safe-area-inset-top, 0px));
+  right: calc(0.75rem + env(safe-area-inset-right, 0px));
+  z-index: 50;
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  background: none;
+  border: none;
+  padding: 0;
+}
+
+/* Inline error chip in the floating action group. Hidden when empty so it
+ * doesn't take any space; appears as a small mono badge when set. */
+.save-error {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--bg);
+  background: var(--danger);
+  padding: 0.35rem 0.55rem;
+  border-radius: 2px;
+}
+.save-error:empty { display: none; }
+
+/* Mobile-only segmented pill (iOS-style) shown at bottom-center.
+ * Hidden by default on desktop; the @media block below turns it into a
+ * floating pill on narrow viewports. */
+.editor-tabs {
+  display: none;
+}
+.editor-tabs button {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  background: transparent;
+  border: none;
+  border-radius: 999px;
+  padding: 6px 14px;
+  color: var(--ink-soft);
+  transition: background 150ms ease, color 150ms ease;
+}
+.editor-tabs button[aria-selected="true"] {
+  background: var(--ink);
+  color: var(--bg);
+}
+
+.split {
+  flex: 1;
+  display: grid;
+  /* desktop default: editor full-width, preview collapsed */
+  grid-template-columns: 1fr 0;
+  min-height: 0;
+  transition: grid-template-columns 180ms ease;
+}
+.split[data-preview-open="true"] {
+  grid-template-columns: 1fr 1fr;
+}
+.split > .pane {
+  min-width: 0;
+  min-height: 0;
+}
+.split > .pane.editor-pane {
+  /* The pane itself is a flex column: title input on top, textarea (with its
+   * own scroll) below. The pane never scrolls — the textarea does — so the
+   * title input always stays pinned at the top of the editor pane. */
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.split > .pane.preview-pane {
+  /* collapsed by default: hide overflowing content during the slide-in */
+  overflow: hidden;
+  border-left: 0 solid var(--rule);
+}
+.split[data-preview-open="true"] > .pane.preview-pane {
+  overflow: auto;
+  border-left: var(--rule-w) solid var(--rule);
+}
+
+.editor-pane input.title {
+  flex: 0 0 auto;
+  font-family: var(--font-serif);
+  font-size: 1.6rem;
+  font-weight: 600;
+  background: var(--bg);
+  border: none;
+  outline: none;
+  /* Big right padding so a long title doesn't run under the floating action
+   * group pinned to the viewport top-right. */
+  padding: 1.2rem 14rem 0.4rem var(--pad);
+  color: var(--ink);
+  letter-spacing: -0.01em;
+  caret-color: var(--accent);
+}
+.editor-pane input.title::placeholder { color: var(--ink-soft); font-style: italic; font-weight: 400; }
+
+.editor-pane textarea {
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+  resize: none;
+  border: none;
+  outline: none;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 15px;
+  line-height: 1.6;
+  padding: 0.6rem var(--pad) 1.4rem;
+  caret-color: var(--accent);
+  cursor: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 14 14'><path d='M2 12 L4 12 L12 4 L10 2 L2 10 Z' fill='%23F4B400' stroke='%231A1714' stroke-width='1' stroke-linejoin='round'/></svg>") 1 13, text;
+  tab-size: 2;
+  -moz-tab-size: 2;
+}
+
+.preview-pane {
+  background: var(--bg);
+  padding: 1.4rem var(--pad) 4rem;
+}
+.preview-pane .prose { max-width: var(--measure); margin: 0 auto; }
+.preview-pane .placeholder {
+  color: var(--ink-soft);
+  font-style: italic;
+  text-align: center;
+  margin-top: 4rem;
+  font-family: var(--font-serif);
+}
+
+@media (max-width: 720px) {
+  /* Floating segmented pill at bottom-center. Out of normal flow so the
+   * editor/preview pane reclaim the vertical space. env() keeps it above
+   * the iOS home-bar indicator. */
+  .editor-tabs {
+    display: inline-flex;
+    gap: 2px;
+    position: fixed;
+    bottom: calc(1rem + env(safe-area-inset-bottom, 0px));
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 50;
+    background: var(--bg-soft);
+    border: var(--rule-w) solid var(--rule);
+    border-radius: 999px;
+    padding: 3px;
+  }
+  /* mobile: tabs swap panes; ignore preview-toggle desktop state */
+  .split,
+  .split[data-preview-open="true"] { grid-template-columns: 1fr; }
+  .split > .pane.editor-pane { border-right: none; }
+  .split > .pane.preview-pane { overflow: visible; border-left: none; max-height: none; }
+  .split > .pane[hidden] { display: none; }
+  #preview-toggle { display: none; }
+
+  /* Mobile editor flows in the page: the shell takes content height, the
+   * editor pane stops establishing its own scroll context, and the textarea
+   * grows with content. The browser-window itself is the scroll container,
+   * so the title scrolls up out of view and the footer naturally lands at
+   * the bottom of the document. */
+  .editor-shell { flex: none; height: auto; min-height: auto; }
+  .split > .pane.editor-pane { overflow: visible; }
+  .editor-pane textarea {
+    /* iOS Safari auto-zooms when a focused field's font-size is <16px. Bump
+     * the mono textarea on mobile to defeat the zoom-in jump on tap. */
+    font-size: 16px;
+    height: auto;
+    min-height: 60vh;
+    resize: none;
+    /* Modern Safari/Chrome auto-grow: the textarea sizes to its content.
+     * Older browsers (Safari <17.4, FF <124) get the same effect via the
+     * JS fallback in src/client/editor.ts. */
+    field-sizing: content;
+  }
+
+  .editor-pane input.title {
+    /* Buttons are smaller on mobile (preview-toggle is hidden); shrink the
+     * reserved gutter so the title still has room to breathe. */
+    padding: 0.9rem 8rem 0.3rem var(--pad);
+    font-size: 1.4rem;
+  }
+}
+
+/* ---------- toast ---------- */
+
+.toast {
+  position: fixed;
+  top: 1rem;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--ink);
+  color: var(--bg);
+  padding: 0.6rem 1rem;
+  border-radius: 2px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  z-index: 100;
+  animation: toast-in 200ms ease-out;
+}
+@keyframes toast-in {
+  from { opacity: 0; transform: translate(-50%, -8px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}
+
+/* ---------- docs page ---------- */
+
+.docs {
+  max-width: var(--measure);
+  margin: 3rem auto;
+  padding: 0 var(--pad) 6rem;
+}
+.docs h1 { font-weight: 600; letter-spacing: -0.01em; }
+
+/* ---------- stats page ---------- */
+
+.stats {
+  max-width: var(--measure);
+  margin: 5rem auto;
+  padding: 0 var(--pad);
+  text-align: center;
+  font-family: var(--font-serif);
+}
+.stats .number {
+  font-size: 5rem;
+  font-weight: 600;
+  color: var(--ink);
+  letter-spacing: -0.03em;
+  margin: 0;
+  line-height: 1;
+}
+.stats .label {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--ink-soft);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  margin-top: 0.5rem;
+}

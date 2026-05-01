@@ -1,0 +1,13 @@
+node_modules
+.wrangler
+.dev.vars
+.cursor
+dist
+.DS_Store
+worker-configuration.d.ts
+*.log
+.env
+.env.local
+coverage
+wrangler.local.jsonc
+wrangler.*.local.jsonc

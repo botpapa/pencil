@@ -1,0 +1,55 @@
+{
+  "name": "pencil-md",
+  "version": "0.1.0",
+  "description": "Open-source, free, telegra.ph-style markdown sharing service. Paste markdown, get a permanent shareable URL. No auth, no signup.",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/botpapa/pencil"
+  },
+  "scripts": {
+    "dev": "npm run build:client && wrangler dev",
+    "deploy": "npm run build:client && wrangler deploy",
+    "deploy:prod": "npm run build:client && wrangler deploy --config wrangler.local.jsonc",
+    "build": "npm run build:client",
+    "build:client": "node scripts/build-client.mjs",
+    "typecheck": "tsc --noEmit",
+    "cf-typegen": "wrangler types",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "e2e": "vitest run --config vitest.e2e.config.ts",
+    "e2e:prod": "E2E_BASE_URL=https://pencil.md vitest run --config vitest.e2e.config.ts",
+    "db:migrate:local": "wrangler d1 migrations apply pencil-md --local",
+    "db:migrate": "wrangler d1 migrations apply pencil-md --remote",
+    "db:migrate:prod": "wrangler d1 migrations apply pencil-md --remote --config wrangler.local.jsonc",
+    "fonts": "node scripts/download-fonts.mjs"
+  },
+  "dependencies": {
+    "hono": "^4.6.14",
+    "markdown-it": "^14.1.0",
+    "markdown-it-anchor": "^9.2.0",
+    "markdown-it-footnote": "^4.0.0",
+    "markdown-it-mark": "^4.0.0",
+    "markdown-it-task-lists": "^2.1.1",
+    "markdown-it-toc-done-right": "^4.2.0",
+    "highlight.js": "^11.10.0",
+    "sanitize-html": "^2.13.1",
+    "nanoid": "^5.0.9",
+    "workers-og": "^0.0.25"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.5.40",
+    "@cloudflare/workers-types": "^4.20250109.0",
+    "@types/markdown-it": "^14.1.2",
+    "@types/sanitize-html": "^2.13.0",
+    "esbuild": "^0.24.2",
+    "typescript": "^5.7.3",
+    "vitest": "~2.1.9",
+    "wrangler": "^3.99.0"
+  }
+}
