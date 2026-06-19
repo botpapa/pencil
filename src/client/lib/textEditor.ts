@@ -22,6 +22,11 @@ export class TextEditor {
   private onChange: () => void;
   private onFocus?: () => void;
   private composing = false;
+  // Per-editor undo history — required because we preventDefault native input,
+  // so the browser's own undo stack stays empty.
+  private undoStack: { src: string; caret: number }[] = [];
+  private redoStack: { src: string; caret: number }[] = [];
+  private lastUndoKind = "";
 
   constructor(el: HTMLElement, model: TextModel, opts: TextEditorOptions) {
     this.el = el;
@@ -36,6 +41,14 @@ export class TextEditor {
     this.el.addEventListener("beforeinput", (e) => this.onBeforeInput(e as InputEvent));
     this.el.addEventListener("compositionstart", () => { this.composing = true; });
     this.el.addEventListener("compositionend", () => { this.composing = false; this.syncFromDom(); });
+    this.el.addEventListener("keydown", (e) => {
+      const meta = e.metaKey || e.ctrlKey;
+      if (meta && e.key.toLowerCase() === "z") {
+        e.preventDefault();
+        e.stopPropagation();
+        if (e.shiftKey) this.redo(); else this.undo();
+      }
+    });
     this.el.addEventListener("keyup", () => this.refreshCaretLine());
     this.el.addEventListener("mouseup", () => this.refreshCaretLine());
     this.el.addEventListener("focus", () => { this.onFocus?.(); this.render(true); });
@@ -44,6 +57,7 @@ export class TextEditor {
       const t = e.clipboardData?.getData("text/plain");
       if (t == null) return;
       e.preventDefault();
+      this.snapshot("paste");
       this.replaceSelection(t);
     });
   }
@@ -137,12 +151,46 @@ export class TextEditor {
   private onBeforeInput(e: InputEvent): void {
     if (this.composing) return;
     const t = e.inputType;
-    if (t === "insertText" && e.data != null) { e.preventDefault(); this.replaceSelection(e.data); }
-    else if (t === "insertParagraph" || t === "insertLineBreak") { e.preventDefault(); this.insertNewline(); }
-    else if (t === "deleteContentBackward") { e.preventDefault(); this.deleteBackward(); }
-    else if (t === "deleteContentForward") { e.preventDefault(); this.deleteForward(); }
+    if (t === "historyUndo") { e.preventDefault(); this.undo(); return; }
+    if (t === "historyRedo") { e.preventDefault(); this.redo(); return; }
+    if (t === "insertText" && e.data != null) { e.preventDefault(); this.snapshot("insert"); this.replaceSelection(e.data); }
+    else if (t === "insertParagraph" || t === "insertLineBreak") { e.preventDefault(); this.snapshot("newline"); this.insertNewline(); }
+    else if (t === "deleteContentBackward") { e.preventDefault(); this.snapshot("delete"); this.deleteBackward(); }
+    else if (t === "deleteContentForward") { e.preventDefault(); this.snapshot("delete"); this.deleteForward(); }
     else if (t === "insertFromPaste") { /* paste listener handles it */ }
-    else if (t.startsWith("delete")) { e.preventDefault(); this.deleteBackward(); }
+    else if (t.startsWith("delete")) { e.preventDefault(); this.snapshot("delete"); this.deleteBackward(); }
+  }
+
+  private caretOrEnd(): number {
+    return this.caretOffset() ?? this.src.length;
+  }
+  // Record a pre-edit state. Consecutive inserts coalesce into one undo step.
+  private snapshot(kind: string): void {
+    if (kind === "insert" && this.lastUndoKind === "insert") return;
+    this.undoStack.push({ src: this.src, caret: this.caretOrEnd() });
+    if (this.undoStack.length > 300) this.undoStack.shift();
+    this.redoStack.length = 0;
+    this.lastUndoKind = kind;
+  }
+  private restore(snap: { src: string; caret: number }): void {
+    this.src = snap.src;
+    this.model.md = this.src;
+    this.renderInner(snap.caret);
+    this.setCaret(snap.caret);
+    this.lastUndoKind = "";
+    this.onChange();
+  }
+  undo(): void {
+    const snap = this.undoStack.pop();
+    if (!snap) return;
+    this.redoStack.push({ src: this.src, caret: this.caretOrEnd() });
+    this.restore(snap);
+  }
+  redo(): void {
+    const snap = this.redoStack.pop();
+    if (!snap) return;
+    this.undoStack.push({ src: this.src, caret: this.caretOrEnd() });
+    this.restore(snap);
   }
 
   replaceSelection(text: string): void {

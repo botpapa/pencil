@@ -71,6 +71,9 @@ let color = COLORS[0]!;
 let strokeWidth = 3;
 let textSize = 18; // font size (px) for the next text block; tracks the size bar
 let selectedId: string | null = null;
+// True when an element is selected for transform (move/resize handles shown).
+// Distinct from a text block being focused for editing.
+let transformSelected = false;
 
 let nid = 0;
 function uid(): string {
@@ -261,7 +264,7 @@ function mountText(el: TextEl): HTMLElement {
   div.setAttribute("data-id", el.id);
   if (!readOnly) div.contentEditable = "true";
   const editor = new TextEditor(div, el, {
-    onChange: () => markDirty(),
+    onChange: () => { if (transformSelected) { transformSelected = false; updateSelectionOverlay(); } markDirty(); },
     onFocus: () => { selectEl(el.id, false); reflectTextSize(el.fontSize); },
     readOnly,
   });
@@ -314,7 +317,7 @@ function buildOverlay(): void {
   // Double-click the box re-enters text editing.
   selOverlay.addEventListener("dblclick", () => {
     const el = scene.elements.find((x) => x.id === selectedId);
-    if (el?.type === "text") { hideOverlay(); editors.get(el.id)?.el.focus(); }
+    if (el?.type === "text") { transformSelected = false; hideOverlay(); editors.get(el.id)?.el.focus(); }
   });
   add(document.body, selOverlay);
 }
@@ -338,9 +341,8 @@ function updateSelectionOverlay(): void {
   if (!selOverlay) return;
   const el = selectedId ? scene.elements.find((x) => x.id === selectedId) : null;
   const node = el ? elNodes.get(el.id) : null;
-  // Hide while a text block is being edited (focused) — the overlay is only for
-  // move/resize, not editing.
-  if (!el || !node || (el.type !== "text" && el.type !== "image") || document.activeElement === node) {
+  // Overlay shows only in transform mode (move/resize), never during editing.
+  if (!el || !node || (el.type !== "text" && el.type !== "image") || !transformSelected) {
     selOverlay.hidden = true;
     return;
   }
@@ -362,12 +364,15 @@ function onOverlayDown(e: PointerEvent): void {
   const startW = toWorld(e.clientX, e.clientY);
   const ox = el.x, oy = el.y;
   try { selOverlay!.setPointerCapture(e.pointerId); } catch { /* */ }
+  const node = elNodes.get(el.id) as HTMLElement | undefined;
   const move = (ev: PointerEvent): void => {
     const w = toWorld(ev.clientX, ev.clientY);
     el.x = ox + (w[0] - startW[0]);
     el.y = oy + (w[1] - startW[1]);
-    remountEl(el);
-    selectEl(el.id, false);
+    // Update the existing node in place — never remount mid-drag (remounting a
+    // text block recreates its editor + re-parses markdown every frame = jank).
+    if (node) { node.style.left = `${el.x}px`; node.style.top = `${el.y}px`; }
+    updateSelectionOverlay();
   };
   const up = (): void => {
     selOverlay!.removeEventListener("pointermove", move);
@@ -395,17 +400,24 @@ function startResize(e: PointerEvent, corner: "nw" | "ne" | "sw" | "se"): void {
   const origDiag = Math.hypot(dragX - ax, dragY - ay) || 1;
   const origFont = el.type === "text" ? el.fontSize : 0;
   try { (e.target as HTMLElement).setPointerCapture(e.pointerId); } catch { /* */ }
+  const node = elNodes.get(el.id) as HTMLElement | undefined;
   const move = (ev: PointerEvent): void => {
     const p = toWorld(ev.clientX, ev.clientY);
     const s = Math.min(50, Math.max(0.05, Math.hypot(p[0] - ax, p[1] - ay) / origDiag));
     const nw = box.w * s, nh = box.h * s;
     const nx = corner === "se" || corner === "ne" ? ax : ax - nw;
     const ny = corner === "se" || corner === "sw" ? ay : ay - nh;
-    if (el.type === "image") { el.w = nw; el.h = nh; el.x = nx; el.y = ny; }
-    else { el.fontSize = Math.max(MIN_FONT, origFont * s); el.x = nx; el.y = ny; }
-    remountEl(el);
-    selectEl(el.id, false);
-    if (el.type === "text") reflectTextSize(el.fontSize);
+    // In-place style updates only — no remount (text/markdown scales via the
+    // em-based spans when we change the block's font-size).
+    if (el.type === "image") {
+      el.w = nw; el.h = nh; el.x = nx; el.y = ny;
+      if (node) { node.style.width = `${nw}px`; node.style.height = `${nh}px`; node.style.left = `${nx}px`; node.style.top = `${ny}px`; }
+    } else {
+      el.fontSize = Math.max(MIN_FONT, origFont * s); el.x = nx; el.y = ny;
+      if (node) { node.style.fontSize = `${el.fontSize}px`; node.style.left = `${nx}px`; node.style.top = `${ny}px`; }
+      reflectTextSize(el.fontSize);
+    }
+    updateSelectionOverlay();
   };
   const up = (): void => {
     (e.target as HTMLElement).removeEventListener("pointermove", move);
@@ -541,14 +553,14 @@ root.addEventListener("pointerdown", (e) => {
 
   // A canvas press elsewhere clears any transform selection (the overlay has its
   // own handlers, so moving/resizing doesn't reach here).
-  if (selectedId) selectEl(null, false);
+  if (selectedId) { transformSelected = false; selectEl(null, false); }
 
   const hitId = hitElementId(e.target);
 
   if (mode === "text") {
     if (hitId) {
       const ed = editors.get(hitId);
-      if (ed) { ed.el.focus(); return; }
+      if (ed) { transformSelected = false; ed.el.focus(); return; }
     }
     // create a new text element at the click point
     const [wx, wy] = toWorld(e.clientX, e.clientY);
@@ -668,7 +680,23 @@ root.addEventListener("dblclick", (e) => {
   if (el && (el.type === "text" || el.type === "image")) {
     e.preventDefault();
     (document.activeElement as HTMLElement | null)?.blur?.();
+    transformSelected = true;
     selectEl(id, false);
+    // For text, focus it and highlight all its content so it reads as
+    // "selected" (and typing replaces it). Set the range after the focus-driven
+    // re-render (which would otherwise collapse it to a caret).
+    if (el.type === "text") {
+      const node = elNodes.get(id) as HTMLElement | undefined;
+      if (node) {
+        node.focus(); // focus fires its re-render synchronously…
+        const r = document.createRange(); // …then we set the full selection after it
+        r.selectNodeContents(node);
+        const sel = window.getSelection();
+        sel?.removeAllRanges();
+        sel?.addRange(r);
+        updateSelectionOverlay();
+      }
+    }
   }
 });
 
@@ -723,6 +751,7 @@ window.addEventListener("keydown", (e) => {
     deleteSelected();
   }
   if (e.key === "Escape") {
+    transformSelected = false;
     selectEl(null, false);
     (document.activeElement as HTMLElement | null)?.blur?.();
   }

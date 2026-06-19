@@ -171,6 +171,72 @@ function run(): void {
     assert("ol_increment", model.md === "1. x\n2. y", model.md);
   }
 
+  // 10) Emoji (surrogate pairs) keep the source intact.
+  {
+    const { div, model } = fresh();
+    type(div, "a😀b");
+    assert("emoji_source", model.md === "a😀b", model.md);
+    assert("emoji_domsource", domSource(div) === "a😀b", domSource(div));
+  }
+
+  // 11) Backspace on an empty block is a no-op (no crash).
+  {
+    const { div, model } = fresh();
+    back(div, 3);
+    assert("empty_backspace", model.md === "", JSON.stringify(model.md));
+  }
+
+  // 12) Backspace at the very start is a no-op.
+  {
+    const { div, model } = fresh();
+    type(div, "a");
+    caretAt(div, 0);
+    back(div, 1);
+    assert("backspace_at_start", model.md === "a", model.md);
+  }
+
+  // 13) Heading toggles live: removing the space de-heads; re-adding re-heads.
+  {
+    const { div } = fresh();
+    type(div, "# H");
+    assert("heading_on", !!div.querySelector(".md-h1"));
+    caretAt(div, 1); // between '#' and ' '
+    back(div, 1); // delete '#'? no — caret at 1 deletes char before (the '#')
+    // now "# H" -> " H" : not a heading
+    assert("heading_off_after_edit", !div.querySelector(".md-h1"));
+  }
+
+  // 14) Delete-forward removes the char after the caret.
+  {
+    const { div, model } = fresh();
+    type(div, "abc");
+    caretAt(div, 1);
+    div.dispatchEvent(new InputEvent("beforeinput", { inputType: "deleteContentForward", bubbles: true, cancelable: true }));
+    assert("delete_forward", model.md === "ac", model.md);
+  }
+
+  // 15) Undo / redo of typing (Cmd+Z / Shift+Cmd+Z).
+  {
+    const { div, model } = fresh();
+    type(div, "abc");
+    div.dispatchEvent(new KeyboardEvent("keydown", { key: "z", metaKey: true, bubbles: true, cancelable: true }));
+    assert("undo_typing", model.md === "", JSON.stringify(model.md));
+    div.dispatchEvent(new KeyboardEvent("keydown", { key: "z", metaKey: true, shiftKey: true, bubbles: true, cancelable: true }));
+    assert("redo_typing", model.md === "abc", model.md);
+  }
+
+  // 16) Undo steps back over distinct ops (type, newline, type).
+  {
+    const { div, model } = fresh();
+    type(div, "a");
+    type(div, "\n");
+    type(div, "b");
+    div.dispatchEvent(new KeyboardEvent("keydown", { key: "z", metaKey: true, bubbles: true, cancelable: true }));
+    assert("undo_step1", model.md === "a\n", JSON.stringify(model.md));
+    div.dispatchEvent(new KeyboardEvent("keydown", { key: "z", metaKey: true, bubbles: true, cancelable: true }));
+    assert("undo_step2", model.md === "a", JSON.stringify(model.md));
+  }
+
   (document.getElementById("out") as HTMLElement).textContent = "RESULT " + JSON.stringify(results);
 }
 

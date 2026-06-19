@@ -314,17 +314,22 @@
 .size-input:focus { outline: 2px solid var(--accent); }
 
 .kbd-hint {
+  display: inline-flex;
+  align-items: center;
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: 13px;
+  line-height: 1;
   color: var(--ink-soft);
   background: var(--bg-soft);
   border: var(--rule-w) solid var(--rule);
-  border-radius: 4px;
-  padding: 0.05rem 0.3rem;
-  margin-left: 0.35rem;
+  border-radius: 5px;
+  padding: 0.18rem 0.4rem;
+  margin-left: 0.4rem;
   white-space: nowrap;
 }
-#draw-save .kbd-hint { background: rgba(255,255,255,0.18); border-color: rgba(255,255,255,0.3); color: var(--bg); }
+/* The ⌘ glyph reads small at text size; bump it so it's legible. */
+.kbd-hint { letter-spacing: 0.02em; }
+#draw-save .kbd-hint { background: rgba(255,255,255,0.2); border-color: rgba(255,255,255,0.35); color: var(--bg); }
 @media (max-width: 720px) { .kbd-hint { display: none; } }
 
 /* `.tool-group { display:flex }` would otherwise beat the UA [hidden] rule, so
