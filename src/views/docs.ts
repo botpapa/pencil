@@ -152,6 +152,40 @@ curl -X DELETE "https://YOUR-DEPLOYMENT/api/v1/pages/abc12345?edit_token=<token>
 { "slug": "abc12345", "deleted": true }
 \`\`\`
 
+## Drawings (draw.pencil.md)
+
+Alongside the markdown app there's an infinite **drawing canvas** at
+\`draw.pencil.md\` — freehand, shapes, images, and Obsidian-style live-markdown
+text. It shares your cookie identity with pencil.md.
+
+A drawing is a JSON **scene**:
+
+\`\`\`json
+{
+  "schemaVersion": 1,
+  "viewport": { "x": 0, "y": 0, "zoom": 1 },
+  "elements": [
+    { "type": "stroke", "points": [[x,y], ...], "color": "#1A1714", "width": 3 },
+    { "type": "shape", "shape": "rect|ellipse|line|arrow", "x":0,"y":0,"w":0,"h":0, "color":"#…", "width":3 },
+    { "type": "text", "x":0,"y":0, "md": "# markdown", "color":"#…", "fontSize":18 },
+    { "type": "image", "x":0,"y":0,"w":0,"h":0, "url": "https://draw.pencil.md/img/…" }
+  ]
+}
+\`\`\`
+
+Create one programmatically:
+
+\`\`\`bash
+curl -X POST https://draw.pencil.md/ \\
+  -H "Content-Type: application/json" \\
+  -d '{"title":"Sketch","scene":"{\\"schemaVersion\\":1,\\"elements\\":[],\\"viewport\\":{\\"x\\":0,\\"y\\":0,\\"zoom\\":1}}"}'
+# -> { "slug": "...", "url": "https://draw.pencil.md/...", "edit_url": "..." }
+\`\`\`
+
+\`GET https://draw.pencil.md/:slug\` renders the canvas (read-only for
+non-owners). Editing, image upload, and password-protection work the same way
+as markdown pages, scoped to the \`draw.\` host.
+
 ## Notes for AI agents
 
 - Save the \`edit_token\` returned by \`POST /pages\` if you want to edit that

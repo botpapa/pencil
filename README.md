@@ -15,6 +15,8 @@ change it later.
 
 - Markdown editor with live preview and local drafts.
 - Clean reader pages with syntax highlighting and heading anchors.
+- **Infinite drawing canvas** at `draw.pencil.md` — freehand, shapes, images,
+  and Obsidian-style live-markdown text, with the same save/share/edit flow.
 - No account system. Edit access uses a signed cookie or `edit_token`.
 - Sanitized markdown, strict CSP, no inline scripts.
 - Public API for scripts, agents, and CLI tools.
@@ -28,6 +30,23 @@ paste markdown -> publish -> get a URL
 
 Pages are public. Editing requires the owner cookie or the `edit_token` returned
 by the API. Lose both and the page becomes read-only.
+
+## Draw (infinite canvas)
+
+`draw.pencil.md` is a sibling app served by the same Worker (matched by the
+`draw.` hostname). It's a vanilla infinite canvas:
+
+- Draw freehand or drop rectangles, ellipses, lines, and arrows in five colours.
+- Switch to text mode (⌘/Ctrl+Enter, or the on-screen button) and click anywhere
+  to type. Text renders as **live markdown** — headings, bold/italic, code,
+  lists, quotes, and links reveal their syntax only on the line you're editing,
+  Obsidian-style.
+- Paste images, pan/zoom (pinch on touch), select to move/resize, undo/redo.
+- Save, share, edit, password-protect, and delete — same as a markdown page.
+
+A drawing is stored as a JSON scene (`{ schemaVersion, elements[], viewport }`)
+in the `drawings` table; pasted images and the share thumbnail live in R2.
+Identity is shared with `pencil.md` via a cookie scoped to the apex domain.
 
 ## Self-Host In 5 Minutes
 
@@ -44,7 +63,8 @@ npx wrangler login
 # 2. Provision storage.
 npx wrangler d1 create pencil-md
 # Copy the returned database_id into wrangler.jsonc d1_databases[0].database_id
-npx wrangler r2 bucket create pencil-og
+npx wrangler r2 bucket create pencil-og        # cached OG images
+npx wrangler r2 bucket create pencil-draw-img  # draw canvas images + thumbnails
 
 # 3. Set the cookie-signing secret.
 openssl rand -base64 32 | npx wrangler secret put COOKIE_SECRET
@@ -57,6 +77,10 @@ npm run deploy
 ```
 
 Open `/` and start writing. `/health` should return `{"ok":true,"app":"pencil.md"}`.
+
+To serve the drawing canvas, add `draw.<your-domain>` as a custom-domain route
+in your Wrangler config (it runs from the same Worker). Locally it's reachable
+at `http://draw.localhost:8787` with no extra setup.
 
 ## Local Development
 
@@ -91,9 +115,9 @@ See `/api` on a running deployment for examples.
 
 ```text
 Cloudflare Workers + Hono
-D1 for pages
-R2 for cached OG images
-Vanilla TypeScript client
+D1 for pages and drawings
+R2 for cached OG images and canvas images
+Vanilla TypeScript client (markdown + canvas)
 markdown-it + sanitize-html
 ```
 
