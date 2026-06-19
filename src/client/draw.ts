@@ -326,6 +326,8 @@ function deleteSelected(): void {
     editors.delete(removed.id);
   }
   selectedId = null;
+  transformSelected = false;
+  (document.activeElement as HTMLElement | null)?.blur?.();
   updateSelectionOverlay();
   markDirty();
 }
@@ -570,6 +572,53 @@ function hitElementId(target: EventTarget | null): string | null {
   return null;
 }
 
+// Clicking to edit text is forgiving: a press within this many screen px of an
+// existing text block edits that block (placing the caret) rather than starting
+// a new one — you're far likelier to want to keep typing in it.
+const TEXT_HIT_SLOP = 26;
+
+// The id of the nearest editable text block within the slop of a screen point.
+function textNearPoint(clientX: number, clientY: number): string | null {
+  let bestId: string | null = null;
+  let bestDist = Infinity;
+  for (const el of scene.elements) {
+    if (el.type !== "text") continue;
+    const node = elNodes.get(el.id);
+    if (!node) continue;
+    const r = node.getBoundingClientRect();
+    const dx = Math.max(r.left - clientX, 0, clientX - r.right);
+    const dy = Math.max(r.top - clientY, 0, clientY - r.bottom);
+    const d = Math.hypot(dx, dy);
+    if (d <= TEXT_HIT_SLOP && d < bestDist) { bestDist = d; bestId = el.id; }
+  }
+  return bestId;
+}
+
+// Caret position under a screen point (handles both engines), or null.
+function caretRangeAt(x: number, y: number): Range | null {
+  const doc = document as Document & {
+    caretRangeFromPoint?: (x: number, y: number) => Range | null;
+    caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null;
+  };
+  if (doc.caretRangeFromPoint) return doc.caretRangeFromPoint(x, y);
+  const cp = doc.caretPositionFromPoint?.(x, y);
+  if (cp) { const r = document.createRange(); r.setStart(cp.offsetNode, cp.offset); r.collapse(true); return r; }
+  return null;
+}
+
+// Place the caret in a text node: at the click if it maps inside, else at the end.
+function placeCaret(node: HTMLElement, clientX: number, clientY: number): void {
+  const sel = window.getSelection();
+  if (!sel) return;
+  const r = caretRangeAt(clientX, clientY);
+  if (r && node.contains(r.startContainer)) { sel.removeAllRanges(); sel.addRange(r); return; }
+  const end = document.createRange();
+  end.selectNodeContents(node);
+  end.collapse(false);
+  sel.removeAllRanges();
+  sel.addRange(end);
+}
+
 // Shortest distance from a point to a line segment (world coords).
 function distToSeg(px: number, py: number, ax: number, ay: number, bx: number, by: number): number {
   const dx = bx - ax, dy = by - ay;
@@ -646,9 +695,17 @@ root.addEventListener("pointerdown", (e) => {
   const hitId = hitElementId(e.target);
 
   if (mode === "text") {
-    if (hitId) {
-      const ed = editors.get(hitId);
-      if (ed) { transformSelected = false; ed.el.focus(); return; }
+    // Edit an existing block if the press lands on it — or just near it.
+    const editId = (hitId && editors.has(hitId)) ? hitId : textNearPoint(e.clientX, e.clientY);
+    if (editId) {
+      const ed = editors.get(editId);
+      if (ed) {
+        transformSelected = false;
+        e.preventDefault(); // we place the caret ourselves
+        ed.el.focus(); // focus re-renders synchronously; set the caret afterwards
+        placeCaret(ed.el, e.clientX, e.clientY);
+        return;
+      }
     }
     // create a new text element at the click point
     const [wx, wy] = toWorld(e.clientX, e.clientY);
@@ -855,6 +912,13 @@ window.addEventListener("keydown", (e) => {
     if (isTyping(e.target)) return; // let the text editor handle its own text
     e.preventDefault();
     if (e.shiftKey) redo(); else undo();
+    return;
+  }
+  // Whole-block selection (borders + handles visible): Backspace/Delete removes
+  // the entire element — even for a focused text block — instead of one letter.
+  if ((e.key === "Delete" || e.key === "Backspace") && transformSelected && selectedId) {
+    e.preventDefault();
+    deleteSelected();
     return;
   }
   if ((e.key === "Delete" || e.key === "Backspace") && selectedId && !isTyping(e.target)) {
