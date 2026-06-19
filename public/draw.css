@@ -271,3 +271,88 @@
   .swatch { width: 18px; height: 18px; flex: 0 0 auto; }
   .tool-sep { flex: 0 0 auto; }
 }
+
+/* "Bring me back to the content" — read mode only, appears when content is
+ * off-screen (scrolled/zoomed away). */
+.back-to-content {
+  position: fixed;
+  bottom: calc(1.25rem + env(safe-area-inset-bottom, 0px));
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 40;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--bg);
+  background: var(--ink);
+  border: none;
+  border-radius: 999px;
+  padding: 0.55rem 1rem;
+  cursor: pointer;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
+}
+.back-to-content:hover { background: var(--accent); color: var(--accent-ink); }
+.back-to-content[hidden] { display: none; }
+
+/* Text-size bar (text mode) + Mac-style shortcut keycaps. */
+.size-group { gap: 0.15rem; }
+.size-group .tool-btn { font-family: var(--font-mono); font-size: 12px; font-weight: 600; }
+.size-input {
+  width: 3ch;
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--ink);
+  background: var(--bg);
+  border: var(--rule-w) solid var(--rule);
+  border-radius: 6px;
+  padding: 0.25rem 0.1rem;
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+.size-input::-webkit-outer-spin-button,
+.size-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.size-input:focus { outline: 2px solid var(--accent); }
+
+.kbd-hint {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--ink-soft);
+  background: var(--bg-soft);
+  border: var(--rule-w) solid var(--rule);
+  border-radius: 4px;
+  padding: 0.05rem 0.3rem;
+  margin-left: 0.35rem;
+  white-space: nowrap;
+}
+#draw-save .kbd-hint { background: rgba(255,255,255,0.18); border-color: rgba(255,255,255,0.3); color: var(--bg); }
+@media (max-width: 720px) { .kbd-hint { display: none; } }
+
+/* `.tool-group { display:flex }` would otherwise beat the UA [hidden] rule, so
+ * hidden tool groups/separators stayed visible. Make hidden win. */
+.tool-group[hidden], .tool-sep[hidden] { display: none; }
+
+/* Selection overlay (text + image): move by dragging the box, resize by the
+ * corner handles. Screen-space, positioned over the element. */
+.sel-overlay {
+  position: fixed;
+  z-index: 35;
+  box-sizing: border-box;
+  border: 1.5px solid var(--accent);
+  border-radius: 2px;
+  cursor: move;
+  touch-action: none;
+}
+.sel-overlay[hidden] { display: none; }
+.sel-handle {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  background: var(--bg);
+  border: 1.5px solid var(--accent);
+  border-radius: 2px;
+  touch-action: none;
+}
+.sel-nw { left: -7px; top: -7px; cursor: nwse-resize; }
+.sel-ne { right: -7px; top: -7px; cursor: nesw-resize; }
+.sel-sw { left: -7px; bottom: -7px; cursor: nesw-resize; }
+.sel-se { right: -7px; bottom: -7px; cursor: nwse-resize; }

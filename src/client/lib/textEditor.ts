@@ -138,7 +138,7 @@ export class TextEditor {
     if (this.composing) return;
     const t = e.inputType;
     if (t === "insertText" && e.data != null) { e.preventDefault(); this.replaceSelection(e.data); }
-    else if (t === "insertParagraph" || t === "insertLineBreak") { e.preventDefault(); this.replaceSelection("\n"); }
+    else if (t === "insertParagraph" || t === "insertLineBreak") { e.preventDefault(); this.insertNewline(); }
     else if (t === "deleteContentBackward") { e.preventDefault(); this.deleteBackward(); }
     else if (t === "deleteContentForward") { e.preventDefault(); this.deleteForward(); }
     else if (t === "insertFromPaste") { /* paste listener handles it */ }
@@ -150,6 +150,40 @@ export class TextEditor {
     const [a, b] = range;
     this.src = this.src.slice(0, a) + text + this.src.slice(b);
     this.commit(a + text.length);
+  }
+
+  // Enter: continue a list (next bullet / number), or exit it when the current
+  // item is empty (Obsidian behaviour). Otherwise a plain newline.
+  private insertNewline(): void {
+    const range = this.selectionRange();
+    if (range && range[0] !== range[1]) { this.replaceSelection("\n"); return; }
+    const caret = this.caretOffset() ?? this.src.length;
+    const li = this.caretLineIndex(caret);
+    const lines = this.src.split("\n");
+    const line = lines[li] ?? "";
+    const ul = /^(\s*)([-*+] )(.*)$/.exec(line);
+    const ol = /^(\s*)(\d+)\. (.*)$/.exec(line);
+    if (ul) {
+      if (ul[3]!.trim() === "") { this.clearLine(li); return; } // empty item → exit list
+      this.replaceSelection("\n" + ul[1]! + ul[2]!);
+      return;
+    }
+    if (ol) {
+      if (ol[3]!.trim() === "") { this.clearLine(li); return; }
+      this.replaceSelection("\n" + ol[1]! + (parseInt(ol[2]!, 10) + 1) + ". ");
+      return;
+    }
+    this.replaceSelection("\n");
+  }
+
+  // Blank out the current line (used to exit an empty list item).
+  private clearLine(li: number): void {
+    const lines = this.src.split("\n");
+    let start = 0;
+    for (let i = 0; i < li; i++) start += lines[i]!.length + 1;
+    const end = start + lines[li]!.length;
+    this.src = this.src.slice(0, start) + this.src.slice(end);
+    this.commit(start);
   }
   private deleteBackward(): void {
     const range = this.selectionRange();

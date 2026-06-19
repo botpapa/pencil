@@ -144,6 +144,33 @@ function run(): void {
     assert("replace_selection", model.md === "hXo", model.md);
   }
 
+  // 7) Unordered list auto-continues on Enter.
+  {
+    const { div, model } = fresh();
+    type(div, "- a");
+    type(div, "\n");
+    type(div, "b");
+    assert("ul_continue", model.md === "- a\n- b", model.md);
+  }
+
+  // 8) Enter on an empty bullet exits the list.
+  {
+    const { div, model } = fresh();
+    type(div, "- a");
+    type(div, "\n"); // -> "- a\n- "
+    type(div, "\n"); // empty bullet -> exit
+    assert("ul_exit_empty", model.md === "- a\n", model.md);
+  }
+
+  // 9) Ordered list increments.
+  {
+    const { div, model } = fresh();
+    type(div, "1. x");
+    type(div, "\n");
+    type(div, "y");
+    assert("ol_increment", model.md === "1. x\n2. y", model.md);
+  }
+
   (document.getElementById("out") as HTMLElement).textContent = "RESULT " + JSON.stringify(results);
 }
 

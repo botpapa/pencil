@@ -42,6 +42,8 @@ const body = document.body;
 const mode0 = (body.dataset.mode ?? "new") as "new" | "edit" | "read";
 const readOnly = mode0 === "read";
 const slug = body.dataset.slug ?? "";
+const isMac = /Mac|iPhone|iPad/i.test(navigator.platform) || /Mac OS X/i.test(navigator.userAgent);
+const MOD = isMac ? "⌘" : "Ctrl+";
 
 const root = document.getElementById("draw-root") as HTMLElement;
 const titleInput = document.getElementById("draw-title") as HTMLInputElement | null;
@@ -67,6 +69,7 @@ let mode: Mode = "draw";
 let tool: Tool = "draw";
 let color = COLORS[0]!;
 let strokeWidth = 3;
+let textSize = 18; // font size (px) for the next text block; tracks the size bar
 let selectedId: string | null = null;
 
 let nid = 0;
@@ -90,9 +93,17 @@ add(root, world);
 
 const vp = scene.viewport;
 
+// If we arrived from the reader's "edit" link, restore that exact view
+// (#v=x,y,zoom) so editing continues where the reader was looking.
+(function applyHashViewport(): void {
+  const m = /#v=(-?[\d.]+),(-?[\d.]+),([\d.]+)/.exec(location.hash);
+  if (m) { vp.x = +m[1]!; vp.y = +m[2]!; vp.zoom = +m[3]!; }
+})();
+
 function applyViewport(): void {
   world.style.transform = `translate(${vp.x}px, ${vp.y}px) scale(${vp.zoom})`;
   if (zoomLevel) zoomLevel.textContent = `${Math.round(vp.zoom * 100)}%`;
+  afterViewportChange();
 }
 
 function toWorld(clientX: number, clientY: number): Pt {
@@ -251,7 +262,7 @@ function mountText(el: TextEl): HTMLElement {
   if (!readOnly) div.contentEditable = "true";
   const editor = new TextEditor(div, el, {
     onChange: () => markDirty(),
-    onFocus: () => selectEl(el.id, false),
+    onFocus: () => { selectEl(el.id, false); reflectTextSize(el.fontSize); },
     readOnly,
   });
   editors.set(el.id, editor);
@@ -266,6 +277,7 @@ function selectEl(id: string | null, scroll: boolean): void {
   selectedId = id;
   if (id && elNodes.get(id)) elNodes.get(id)!.classList.add("selected");
   void scroll;
+  updateSelectionOverlay();
 }
 
 function deleteSelected(): void {
@@ -280,7 +292,128 @@ function deleteSelected(): void {
     editors.delete(removed.id);
   }
   selectedId = null;
+  updateSelectionOverlay();
   markDirty();
+}
+
+// ---------- selection overlay: move + resize handles (text & image) ----------
+
+let selOverlay: HTMLElement | null = null;
+
+function buildOverlay(): void {
+  selOverlay = document.createElement("div");
+  selOverlay.className = "sel-overlay";
+  selOverlay.hidden = true;
+  for (const corner of ["nw", "ne", "sw", "se"] as const) {
+    const h = document.createElement("div");
+    h.className = `sel-handle sel-${corner}`;
+    h.addEventListener("pointerdown", (e) => startResize(e, corner));
+    add(selOverlay, h);
+  }
+  selOverlay.addEventListener("pointerdown", onOverlayDown);
+  // Double-click the box re-enters text editing.
+  selOverlay.addEventListener("dblclick", () => {
+    const el = scene.elements.find((x) => x.id === selectedId);
+    if (el?.type === "text") { hideOverlay(); editors.get(el.id)?.el.focus(); }
+  });
+  add(document.body, selOverlay);
+}
+
+function hideOverlay(): void {
+  if (selOverlay) selOverlay.hidden = true;
+}
+
+// World-space box of a resizable element (image dims are stored; text is
+// measured from its rendered node).
+function worldBox(el: El): { x: number; y: number; w: number; h: number } | null {
+  if (el.type === "image") return { x: el.x, y: el.y, w: el.w, h: el.h };
+  if (el.type === "text") {
+    const node = elNodes.get(el.id) as HTMLElement | undefined;
+    return { x: el.x, y: el.y, w: node ? node.offsetWidth : 120, h: node ? node.offsetHeight : 30 };
+  }
+  return null;
+}
+
+function updateSelectionOverlay(): void {
+  if (!selOverlay) return;
+  const el = selectedId ? scene.elements.find((x) => x.id === selectedId) : null;
+  const node = el ? elNodes.get(el.id) : null;
+  // Hide while a text block is being edited (focused) — the overlay is only for
+  // move/resize, not editing.
+  if (!el || !node || (el.type !== "text" && el.type !== "image") || document.activeElement === node) {
+    selOverlay.hidden = true;
+    return;
+  }
+  const r = node.getBoundingClientRect();
+  selOverlay.hidden = false;
+  selOverlay.style.left = `${r.left}px`;
+  selOverlay.style.top = `${r.top}px`;
+  selOverlay.style.width = `${r.width}px`;
+  selOverlay.style.height = `${r.height}px`;
+}
+
+// Drag the box body → move the element.
+function onOverlayDown(e: PointerEvent): void {
+  if (e.target !== selOverlay) return; // handles handle themselves
+  e.preventDefault();
+  const el = scene.elements.find((x) => x.id === selectedId) as (TextEl | ImageEl) | undefined;
+  if (!el) return;
+  pushHistory();
+  const startW = toWorld(e.clientX, e.clientY);
+  const ox = el.x, oy = el.y;
+  try { selOverlay!.setPointerCapture(e.pointerId); } catch { /* */ }
+  const move = (ev: PointerEvent): void => {
+    const w = toWorld(ev.clientX, ev.clientY);
+    el.x = ox + (w[0] - startW[0]);
+    el.y = oy + (w[1] - startW[1]);
+    remountEl(el);
+    selectEl(el.id, false);
+  };
+  const up = (): void => {
+    selOverlay!.removeEventListener("pointermove", move);
+    selOverlay!.removeEventListener("pointerup", up);
+    markDirty();
+  };
+  selOverlay!.addEventListener("pointermove", move);
+  selOverlay!.addEventListener("pointerup", up);
+}
+
+// Drag a corner → scale. Image scales w/h; text scales fontSize. The opposite
+// corner stays anchored; aspect ratio is preserved.
+function startResize(e: PointerEvent, corner: "nw" | "ne" | "sw" | "se"): void {
+  e.preventDefault();
+  e.stopPropagation();
+  const el = scene.elements.find((x) => x.id === selectedId) as (TextEl | ImageEl) | undefined;
+  if (!el) return;
+  const box = worldBox(el);
+  if (!box) return;
+  pushHistory();
+  const ax = corner === "se" || corner === "ne" ? box.x : box.x + box.w; // anchor X (opposite)
+  const ay = corner === "se" || corner === "sw" ? box.y : box.y + box.h; // anchor Y (opposite)
+  const dragX = corner === "ne" || corner === "se" ? box.x + box.w : box.x;
+  const dragY = corner === "sw" || corner === "se" ? box.y + box.h : box.y;
+  const origDiag = Math.hypot(dragX - ax, dragY - ay) || 1;
+  const origFont = el.type === "text" ? el.fontSize : 0;
+  try { (e.target as HTMLElement).setPointerCapture(e.pointerId); } catch { /* */ }
+  const move = (ev: PointerEvent): void => {
+    const p = toWorld(ev.clientX, ev.clientY);
+    const s = Math.min(50, Math.max(0.05, Math.hypot(p[0] - ax, p[1] - ay) / origDiag));
+    const nw = box.w * s, nh = box.h * s;
+    const nx = corner === "se" || corner === "ne" ? ax : ax - nw;
+    const ny = corner === "se" || corner === "sw" ? ay : ay - nh;
+    if (el.type === "image") { el.w = nw; el.h = nh; el.x = nx; el.y = ny; }
+    else { el.fontSize = Math.max(MIN_FONT, origFont * s); el.x = nx; el.y = ny; }
+    remountEl(el);
+    selectEl(el.id, false);
+    if (el.type === "text") reflectTextSize(el.fontSize);
+  };
+  const up = (): void => {
+    (e.target as HTMLElement).removeEventListener("pointermove", move);
+    (e.target as HTMLElement).removeEventListener("pointerup", up);
+    markDirty();
+  };
+  (e.target as HTMLElement).addEventListener("pointermove", move);
+  (e.target as HTMLElement).addEventListener("pointerup", up);
 }
 
 // ---------- history (undo/redo) ----------
@@ -406,6 +539,10 @@ root.addEventListener("pointerdown", (e) => {
   if (readOnly) return;
   if (e.button !== 0) return;
 
+  // A canvas press elsewhere clears any transform selection (the overlay has its
+  // own handlers, so moving/resizing doesn't reach here).
+  if (selectedId) selectEl(null, false);
+
   const hitId = hitElementId(e.target);
 
   if (mode === "text") {
@@ -415,7 +552,7 @@ root.addEventListener("pointerdown", (e) => {
     }
     // create a new text element at the click point
     const [wx, wy] = toWorld(e.clientX, e.clientY);
-    const el: TextEl = { id: uid(), type: "text", x: wx, y: wy, md: "", color, fontSize: 18 };
+    const el: TextEl = { id: uid(), type: "text", x: wx, y: wy, md: "", color, fontSize: textSize };
     pushHistory();
     scene.elements.push(el);
     mountEl(el);
@@ -522,6 +659,19 @@ function endPointer(e: PointerEvent): void {
 root.addEventListener("pointerup", endPointer);
 root.addEventListener("pointercancel", endPointer);
 
+// Double-click any element (in any mode) selects it for move / resize / delete.
+root.addEventListener("dblclick", (e) => {
+  if (readOnly) return;
+  const id = hitElementId(e.target);
+  if (!id) return;
+  const el = scene.elements.find((x) => x.id === id);
+  if (el && (el.type === "text" || el.type === "image")) {
+    e.preventDefault();
+    (document.activeElement as HTMLElement | null)?.blur?.();
+    selectEl(id, false);
+  }
+});
+
 // ---------- zoom (wheel + buttons) + pinch ----------
 
 root.addEventListener(
@@ -627,12 +777,55 @@ function imageDims(url: string): Promise<{ w: number; h: number }> {
   });
 }
 
+// ---------- "back to content" (read mode) + viewport framing ----------
+
+let backBtn: HTMLButtonElement | null = null;
+let editLink: HTMLAnchorElement | null = null;
+
+// Frame all elements centered with padding at a comfortable zoom.
+function fitToContent(): void {
+  const b = elementsBounds();
+  if (!b) return;
+  const pad = 80;
+  const cw = b.maxX - b.minX + pad * 2;
+  const ch = b.maxY - b.minY + pad * 2;
+  const sw = window.innerWidth;
+  const sh = window.innerHeight;
+  const zoom = Math.min(2, Math.max(0.1, Math.min(sw / cw, sh / ch)));
+  vp.zoom = zoom;
+  vp.x = sw / 2 - ((b.minX + b.maxX) / 2) * zoom;
+  vp.y = sh / 2 - ((b.minY + b.maxY) / 2) * zoom;
+  applyViewport();
+}
+
+// Is a meaningful chunk of the content currently on screen?
+function contentVisible(): boolean {
+  const b = elementsBounds();
+  if (!b) return true; // empty canvas → nothing to return to
+  const x1 = b.minX * vp.zoom + vp.x;
+  const y1 = b.minY * vp.zoom + vp.y;
+  const x2 = b.maxX * vp.zoom + vp.x;
+  const y2 = b.maxY * vp.zoom + vp.y;
+  const ix = Math.min(x2, window.innerWidth) - Math.max(x1, 0);
+  const iy = Math.min(y2, window.innerHeight) - Math.max(y1, 0);
+  return ix > 40 && iy > 40;
+}
+
+// Runs after every viewport change: toggle the read-mode button and keep the
+// editor hand-off link pointed at the current view.
+function afterViewportChange(): void {
+  if (backBtn) backBtn.hidden = contentVisible();
+  if (editLink) editLink.hash = `v=${Math.round(vp.x)},${Math.round(vp.y)},${vp.zoom.toFixed(3)}`;
+  updateSelectionOverlay();
+}
+
 // ---------- mode + toolbar UI ----------
 
 let toolbar: HTMLElement | null = null;
 let toolsGroup: HTMLElement | null = null;
 let modeChip: HTMLButtonElement | null = null;
 let modeBtnBar: HTMLButtonElement | null = null;
+let sizeInput: HTMLInputElement | null = null;
 let zoomLevel: HTMLElement | null = null;
 
 function toggleMode(): void {
@@ -643,12 +836,30 @@ function setMode(m: Mode): void {
   mode = m;
   root.classList.toggle("mode-draw", m === "draw");
   root.classList.toggle("mode-text", m === "text");
-  // Colours stay in both modes; only the drawing tools hide in text mode.
+  // Colours stay in both modes; drawing tools show in draw, the text-size bar
+  // shows in text.
   toolbar?.querySelectorAll<HTMLElement>(".tools-only").forEach((e) => { e.hidden = m !== "draw"; });
+  toolbar?.querySelectorAll<HTMLElement>(".text-only").forEach((e) => { e.hidden = m !== "text"; });
   const label = m === "draw" ? "draw" : "text";
-  if (modeChip) modeChip.innerHTML = `<strong>${label}</strong> <span class="mode-swap">⇄</span>`;
-  // The in-toolbar (mobile) button shows the mode you'd switch TO.
+  if (modeChip) modeChip.innerHTML = `<strong>${label}</strong> <span class="mode-swap">⇄</span> <kbd class="kbd-hint">${MOD}↵</kbd>`;
   if (modeBtnBar) modeBtnBar.innerHTML = m === "draw" ? ICON.textmode : ICON.pen;
+}
+
+const MIN_FONT = 8;
+const MAX_FONT = 96;
+// Apply a size to the bar (and to the selected text block, if any).
+function applyTextSize(n: number): void {
+  textSize = Math.min(MAX_FONT, Math.max(MIN_FONT, Math.round(n) || MIN_FONT));
+  if (sizeInput) sizeInput.value = String(textSize);
+  if (selectedId) {
+    const el = scene.elements.find((x) => x.id === selectedId);
+    if (el && el.type === "text") { pushHistory(); el.fontSize = textSize; remountEl(el); selectEl(selectedId, false); editors.get(el.id)?.el.focus(); markDirty(); }
+  }
+}
+// Reflect a text block's size in the bar (on selection/focus) without mutating.
+function reflectTextSize(n: number): void {
+  textSize = n;
+  if (sizeInput) sizeInput.value = String(Math.round(n));
 }
 
 function buildUI(): void {
@@ -656,6 +867,16 @@ function buildUI(): void {
     buildZoomChip();
     root.classList.remove("mode-draw");
     root.classList.add("mode-select");
+    // "Bring me back to the content" — shown only when the content is off-screen.
+    editLink = document.querySelector<HTMLAnchorElement>(".draw-actions a");
+    backBtn = document.createElement("button");
+    backBtn.className = "back-to-content";
+    backBtn.type = "button";
+    backBtn.textContent = "↻ back to the content";
+    backBtn.hidden = true;
+    backBtn.addEventListener("click", () => { fitToContent(); });
+    add(document.body, backBtn);
+    afterViewportChange();
     return;
   }
   toolbar = document.createElement("div");
@@ -716,7 +937,33 @@ function buildUI(): void {
     add(toolsGroup, b);
   }
   add(toolbar, toolsGroup);
+
+  // Text-size bar — shown in text mode in place of the shape tools. Sets the
+  // size for the next text block and edits the selected block's size.
+  const sizeSep = sep();
+  sizeSep.classList.add("text-only");
+  const sizeGroup = document.createElement("div");
+  sizeGroup.className = "tool-group text-only size-group";
+  const sizeMinus = document.createElement("button");
+  sizeMinus.className = "tool-btn"; sizeMinus.textContent = "A−"; sizeMinus.title = "smaller text";
+  sizeInput = document.createElement("input");
+  sizeInput.className = "size-input"; sizeInput.type = "number"; sizeInput.min = String(MIN_FONT); sizeInput.max = String(MAX_FONT);
+  sizeInput.value = String(textSize); sizeInput.title = "text size";
+  const sizePlus = document.createElement("button");
+  sizePlus.className = "tool-btn"; sizePlus.textContent = "A+"; sizePlus.title = "larger text";
+  sizeMinus.addEventListener("click", () => applyTextSize(textSize - 2));
+  sizePlus.addEventListener("click", () => applyTextSize(textSize + 2));
+  sizeInput.addEventListener("change", () => applyTextSize(Number(sizeInput!.value)));
+  add(sizeGroup, sizeMinus, sizeInput, sizePlus);
+  add(toolbar, sizeSep, sizeGroup);
+
   add(document.body, toolbar);
+
+  // Show the ⌘S hint on the save button (Cmd/Ctrl+S already triggers save).
+  if (saveBtn) {
+    const label = (saveBtn.textContent ?? "save").trim();
+    saveBtn.innerHTML = `${label} <kbd class="kbd-hint">${MOD}S</kbd>`;
+  }
 
   // Bottom-left mode toggle button (desktop).
   modeChip = document.createElement("button");
@@ -840,7 +1087,7 @@ function elementsBounds(): { minX: number; minY: number; maxX: number; maxY: num
 
 renderAll();
 buildUI();
-if (!readOnly) setMode("draw");
+if (!readOnly) { buildOverlay(); setMode("draw"); }
 
 // Restore a local draft if present and newer (new mode only, to avoid clobber).
 (function restoreDraft() {
@@ -862,3 +1109,4 @@ if (!readOnly) setMode("draw");
 })();
 
 titleInput?.addEventListener("input", markDirty);
+window.addEventListener("resize", afterViewportChange);
