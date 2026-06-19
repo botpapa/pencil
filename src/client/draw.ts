@@ -1549,18 +1549,33 @@ async function renderThumbnail(): Promise<string | undefined> {
   const ox = (W - cw * scale) / 2 - b.minX * scale + pad * scale;
   const oy = (H - ch * scale) / 2 - b.minY * scale + pad * scale;
   ctx.setTransform(scale, 0, 0, scale, ox, oy);
+  // Mirror the SVG dash styles on the 2D canvas.
+  const setDash = (dash: Dash | undefined, w: number): void => {
+    if (dash === "dashed") { ctx.setLineDash([w * 2.5, w * 1.8]); ctx.lineCap = "butt"; }
+    else if (dash === "dotted") { ctx.setLineDash([0.1, w * 1.8]); ctx.lineCap = "round"; }
+    else { ctx.setLineDash([]); ctx.lineCap = "round"; }
+  };
   for (const el of scene.elements) {
     if (el.type === "stroke") {
       ctx.strokeStyle = el.color; ctx.lineWidth = el.width; ctx.lineCap = "round"; ctx.lineJoin = "round";
+      setDash(el.dash, el.width);
       ctx.beginPath();
       el.points.forEach((p, i) => (i === 0 ? ctx.moveTo(p[0], p[1]) : ctx.lineTo(p[0], p[1])));
       ctx.stroke();
     } else if (el.type === "shape") {
-      ctx.strokeStyle = el.color; ctx.lineWidth = el.width;
-      if (el.shape === "rect") ctx.strokeRect(el.x, el.y, el.w, el.h);
-      else if (el.shape === "ellipse") { ctx.beginPath(); ctx.ellipse(el.x + el.w / 2, el.y + el.h / 2, Math.abs(el.w / 2), Math.abs(el.h / 2), 0, 0, Math.PI * 2); ctx.stroke(); }
-      else { ctx.beginPath(); ctx.moveTo(el.x, el.y); ctx.lineTo(el.x + el.w, el.y + el.h); ctx.stroke(); }
+      ctx.strokeStyle = el.color; ctx.fillStyle = el.color; ctx.lineWidth = el.width; ctx.lineJoin = "round";
+      setDash(el.dash, el.width);
+      if (el.shape === "rect") {
+        if (el.fill) ctx.fillRect(el.x, el.y, el.w, el.h);
+        ctx.strokeRect(el.x, el.y, el.w, el.h);
+      } else if (el.shape === "ellipse") {
+        ctx.beginPath();
+        ctx.ellipse(el.x + el.w / 2, el.y + el.h / 2, Math.abs(el.w / 2), Math.abs(el.h / 2), 0, 0, Math.PI * 2);
+        if (el.fill) ctx.fill();
+        ctx.stroke();
+      } else { ctx.beginPath(); ctx.moveTo(el.x, el.y); ctx.lineTo(el.x + el.w, el.y + el.h); ctx.stroke(); }
     } else if (el.type === "text") {
+      ctx.setLineDash([]);
       ctx.fillStyle = el.color; ctx.font = `${el.fontSize}px Georgia, serif`; ctx.textBaseline = "top";
       el.md.split("\n").forEach((ln, i) => ctx.fillText(ln.replace(/^#{1,6}\s+/, ""), el.x, el.y + i * el.fontSize * 1.5));
     }
