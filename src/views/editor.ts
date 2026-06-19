@@ -6,6 +6,7 @@ export type EditorViewOpts = {
   title: string;
   content: string;
   showPagesLink?: boolean;
+  host?: string;
 };
 
 export function editorPage(opts: EditorViewOpts): string {
@@ -67,5 +68,6 @@ export function editorPage(opts: EditorViewOpts): string {
     body: raw(body),
     noIndex: true,
     showPagesLink: opts.showPagesLink,
+    host: opts.host,
   });
 }

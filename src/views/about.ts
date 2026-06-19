@@ -1,4 +1,4 @@
-import { html, raw, layout } from "./layout.js";
+import { html, raw, layout, drawUrl } from "./layout.js";
 import { renderMarkdown } from "../lib/markdown.js";
 
 // We deliberately render the H1 ("About pencil.md") outside of markdown so
@@ -25,6 +25,12 @@ by the public API as \`edit_token\` for stateless clients and AI agents.
 - Privacy-respecting. No third-party scripts, no analytics, no fonts from a CDN.
 - Strict security. Sanitized markdown, layered XSS defense, signed cookies, HSTS-ready.
 
+## Draw
+
+Prefer an infinite canvas? **[draw.pencil.md](DRAW_URL)** lets you sketch, drop
+shapes, and write live-markdown text anywhere on the page — then save and share
+it just like a markdown page.
+
 ## Good for
 
 Long-form notes, drafts, change-logs, post-mortems, quick docs, public
@@ -41,7 +47,9 @@ const ABOUT_DESCRIPTION =
   "pencil.md is a free, open-source markdown publishing service. Paste markdown, get a shareable URL — no signup, no paywall.";
 
 export function aboutPage(origin: string, showPagesLink = false): string {
-  const rendered = renderMarkdown(ABOUT_BODY_MD(origin));
+  const host = (() => { try { return new URL(origin).host; } catch { return undefined; } })();
+  const md = ABOUT_BODY_MD(origin).replaceAll("DRAW_URL", drawUrl(host));
+  const rendered = renderMarkdown(md);
   const body = html`
     <article class="docs prose">
       <h1 id="about-pencil-md">About pencil.md</h1>
@@ -55,5 +63,6 @@ export function aboutPage(origin: string, showPagesLink = false): string {
     bodyClass: "page-about",
     body: raw(body),
     showPagesLink,
+    host,
   });
 }

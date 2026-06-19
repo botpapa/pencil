@@ -99,7 +99,7 @@ function validateBody(
 app.get("/", async (c) => {
   await ensureOwnerCookie(c);
   const hasPages = await ownerHasPages(c.env.DB, c.get("ownerId"));
-  return c.html(homePage(hasPages));
+  return c.html(homePage(hasPages, c.req.header("host")));
 });
 
 // The owner's pages (this browser's cookie). Must be registered before the
@@ -107,7 +107,7 @@ app.get("/", async (c) => {
 app.get("/pages", async (c) => {
   await ensureOwnerCookie(c);
   const pages = await listPagesByOwner(c.env.DB, c.get("ownerId"));
-  return c.html(pagesListPage(pages));
+  return c.html(pagesListPage(pages, c.req.header("host")));
 });
 
 // Create.
@@ -211,6 +211,7 @@ app.get("/:slug", async (c) => {
       isOwner,
       indexable: !isProtected && page.indexable === 1,
       showPagesLink: await ownerHasPages(c.env.DB, ownerId),
+      host: c.req.header("host"),
     }),
   );
 });
@@ -333,6 +334,7 @@ app.get("/:slug/edit", async (c) => {
       title: page.title,
       content: page.content,
       showPagesLink: await ownerHasPages(c.env.DB, c.get("ownerId")),
+      host: c.req.header("host"),
     }),
   );
 });

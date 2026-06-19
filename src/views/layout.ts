@@ -44,6 +44,16 @@ export function html(strings: TemplateStringsArray, ...values: unknown[]): strin
   return out;
 }
 
+// Build the URL of the draw.* sibling app for the current host. Works in prod
+// (pencil.md → https://draw.pencil.md) and locally (localhost:8787 →
+// http://draw.localhost:8787). Defaults to prod when host is unknown.
+export function drawUrl(host?: string): string {
+  if (!host) return "https://draw.pencil.md";
+  if (host.startsWith("draw.")) host = host.slice(5);
+  const local = host.includes("localhost") || /^(127\.|0\.0\.0\.0)/.test(host);
+  return `${local ? "http" : "https"}://draw.${host}`;
+}
+
 export type LayoutOpts = {
   title: string;
   description?: string;
@@ -56,6 +66,9 @@ export type LayoutOpts = {
   // Show the "pages" link in the footer. Set by handlers when the current
   // owner cookie has at least one published page.
   showPagesLink?: boolean;
+  // Current request host (e.g. "pencil.md" or "localhost:8787"), used to build
+  // the footer "draw" link to the matching draw.* subdomain.
+  host?: string;
   // Topbar is opt-in. Pass a pre-rendered header string (or `raw(...)`) to
   // render it; omit to render no topbar at all. There is no built-in default.
   topbar?: string | Raw;
@@ -104,7 +117,7 @@ ${topbar}
 ${bodyHtml}
 </main>
 <footer class="footer">
-<a href="/about">about</a> &middot; <a href="https://github.com/botpapa/pencil">source</a> &middot; <a href="/api">api</a>${opts.showPagesLink ? ` &middot; <a href="/pages">my pages</a>` : ""}
+<a href="/about">about</a> &middot; <a href="${escape(drawUrl(opts.host))}">draw</a> &middot; <a href="/api">api</a>${opts.showPagesLink ? ` &middot; <a href="/pages">my pages</a>` : ""}
 </footer>
 </div>
 </body>

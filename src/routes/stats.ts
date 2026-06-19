@@ -27,6 +27,7 @@ app.get("/:slug/stats", async (c) => {
       indexable: page.indexable === 1,
       protected: page.password_hash != null,
       showPagesLink: await ownerHasPages(c.env.DB, c.get("ownerId")),
+      host: c.req.header("host"),
     }),
   );
 });

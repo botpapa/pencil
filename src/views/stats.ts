@@ -8,6 +8,7 @@ export type StatsViewOpts = {
   indexable: boolean;
   protected: boolean;
   showPagesLink?: boolean;
+  host?: string;
 };
 
 export function statsPage(opts: StatsViewOpts): string {
@@ -112,6 +113,7 @@ export function statsPage(opts: StatsViewOpts): string {
     body: raw(body),
     noIndex: true,
     showPagesLink: opts.showPagesLink,
+    host: opts.host,
   });
 }
 

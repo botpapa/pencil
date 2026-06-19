@@ -9,7 +9,7 @@ function fmtDate(ms: number): string {
   });
 }
 
-export function pagesListPage(pages: PageSummary[]): string {
+export function pagesListPage(pages: PageSummary[], host?: string): string {
   const empty = pages.length === 0;
   const list = pages
     .map(
@@ -41,5 +41,6 @@ export function pagesListPage(pages: PageSummary[]): string {
     body: raw(body),
     noIndex: true,
     showPagesLink: !empty,
+    host,
   });
 }

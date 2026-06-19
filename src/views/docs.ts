@@ -174,5 +174,6 @@ export function docsPage(origin: string, showPagesLink = false): string {
     bodyClass: "page-docs",
     body: raw(body),
     showPagesLink,
+    host: (() => { try { return new URL(origin).host; } catch { return undefined; } })(),
   });
 }
