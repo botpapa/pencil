@@ -103,11 +103,13 @@
    * block grows to its widest line. Authors add line breaks with Enter. */
   white-space: pre;
   outline: none;
-  caret-color: var(--accent);
+  /* High-contrast, slightly heavier caret so it's easy to see while typing. */
+  caret-color: var(--ink);
 }
 .draw-text .md-line { white-space: pre; min-height: 1.5em; }
 .draw-text:empty::before { content: "type…"; color: var(--ink-soft); font-style: italic; }
-.draw-text.selected { box-shadow: 0 0 0 1.5px var(--accent); border-radius: 3px; }
+/* No border while typing/clicking text — the whole-block selection box (the
+ * accent overlay shown on double-tap) is the only frame the text ever gets. */
 
 /* Live-markdown rendered spans inside a text element. */
 .draw-text .md-h1 { font-size: 1.9em; font-weight: 700; letter-spacing: -0.02em; }
@@ -246,8 +248,10 @@
 .mode-chip:hover { border-color: var(--ink-soft); }
 .mode-chip strong { text-transform: capitalize; }
 
-/* In-toolbar mode toggle: mobile only (no Cmd+Enter on touch). */
+/* In-toolbar mode toggle: mobile only (no Cmd+Enter on touch). Its separator
+ * follows it, so no stray rule sits before the colours on desktop. */
 .toolbar-mode-btn { display: none; }
+.mode-sep { display: none; }
 
 @media (max-width: 720px) {
   /* The bottom-left chip + bottom-right zoom would crowd / overlap the
@@ -256,6 +260,7 @@
   .mode-chip { display: none; }
   .zoom-chip { display: none; }
   .toolbar-mode-btn { display: flex; flex: 0 0 auto; }
+  .mode-sep { display: block; }
   /* Fit the full tool set on a phone; scroll horizontally if it still can't. */
   .draw-toolbar {
     max-width: calc(100vw - 0.6rem);

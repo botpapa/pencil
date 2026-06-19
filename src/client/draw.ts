@@ -964,6 +964,7 @@ function afterViewportChange(): void {
 let toolbar: HTMLElement | null = null;
 let toolsGroup: HTMLElement | null = null;
 let optionsBar: HTMLElement | null = null;
+let optionsOpen = false; // the options pill toggles on a second click of the active tool
 let modeChip: HTMLButtonElement | null = null;
 let modeBtnBar: HTMLButtonElement | null = null;
 let sizeInput: HTMLInputElement | null = null;
@@ -1026,6 +1027,7 @@ function applyToSelected(fn: (el: StrokeEl | ShapeEl) => void): void {
 
 function setTool(t: Tool): void {
   tool = t;
+  optionsOpen = false; // picking a (new) tool starts with the options pill closed
   root.classList.toggle("tool-eraser", t === "eraser");
   root.classList.toggle("tool-select", t === "select");
   toolsGroup?.querySelectorAll<HTMLElement>(".tool-btn").forEach((x) => x.classList.toggle("active", x.dataset.tool === t));
@@ -1038,7 +1040,7 @@ function optSep(): HTMLElement { const s = document.createElement("div"); s.clas
 // Rebuild the contextual options bar for the active tool.
 function updateToolOptions(): void {
   if (!optionsBar) return;
-  if (mode !== "draw" || tool === "select") { optionsBar.hidden = true; return; }
+  if (mode !== "draw" || tool === "select" || !optionsOpen) { optionsBar.hidden = true; return; }
   optionsBar.innerHTML = "";
 
   const isEraser = tool === "eraser";
@@ -1052,7 +1054,7 @@ function updateToolOptions(): void {
     const b = document.createElement("button");
     b.className = "opt-btn opt-thick" + (current === w ? " active" : "");
     b.title = ["thin", "medium", "thick"][i]!;
-    b.innerHTML = `<span class="opt-dot" style="--d:${4 + i * 4}px"></span>`;
+    b.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="${2 + i * 3}" stroke-linecap="round"><line x1="5" y1="12" x2="19" y2="12"/></svg>`;
     b.addEventListener("click", () => {
       if (isEraser) eraserWidth = w;
       else { strokeWidth = w; applyToSelected((el) => { el.width = w; }); }
@@ -1126,7 +1128,11 @@ function buildUI(): void {
   modeBtnBar.className = "tool-btn toolbar-mode-btn";
   modeBtnBar.title = "switch draw / text";
   modeBtnBar.addEventListener("click", toggleMode);
-  add(toolbar, modeBtnBar, sep());
+  // The separator only makes sense next to the mobile-only mode button; hidden
+  // on desktop (where the button is hidden) so no stray rule sits before the colours.
+  const modeSep = sep();
+  modeSep.classList.add("mode-sep");
+  add(toolbar, modeBtnBar, modeSep);
 
   const colorGroup = document.createElement("div");
   colorGroup.className = "tool-group";
@@ -1169,7 +1175,12 @@ function buildUI(): void {
     b.dataset.tool = t;
     b.innerHTML = icon;
     b.title = t;
-    b.addEventListener("click", () => setTool(t));
+    b.addEventListener("click", () => {
+      // First click selects the tool; clicking the already-active tool toggles
+      // its options pill open/closed.
+      if (tool === t) { optionsOpen = !optionsOpen; updateToolOptions(); }
+      else setTool(t);
+    });
     add(toolsGroup, b);
   }
   add(toolbar, toolsGroup);
