@@ -1073,6 +1073,26 @@ async function save(): Promise<void> {
 }
 saveBtn?.addEventListener("click", () => void save());
 
+// ---------- reset canvas ----------
+const resetBtn = document.getElementById("draw-reset") as HTMLButtonElement | null;
+const resetConfirm = document.getElementById("reset-confirm") as HTMLElement | null;
+const resetYes = document.getElementById("reset-yes") as HTMLButtonElement | null;
+const resetCancel = document.getElementById("reset-cancel") as HTMLButtonElement | null;
+resetBtn?.addEventListener("click", () => { if (resetConfirm) resetConfirm.hidden = !resetConfirm.hidden; });
+resetCancel?.addEventListener("click", () => { if (resetConfirm) resetConfirm.hidden = true; });
+resetYes?.addEventListener("click", () => {
+  if (resetConfirm) resetConfirm.hidden = true;
+  if (!scene.elements.length) return;
+  pushHistory(); // reset is undoable (Cmd+Z)
+  scene.elements = [];
+  editors.clear();
+  selectedId = null;
+  transformSelected = false;
+  renderAll();
+  updateSelectionOverlay();
+  markDirty();
+});
+
 // Rasterize the scene to a PNG data URL for the share/OG card.
 async function renderThumbnail(): Promise<string | undefined> {
   const b = elementsBounds();

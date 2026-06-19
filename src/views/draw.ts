@@ -39,7 +39,15 @@ function shell(opts: ShellOpts): string {
   const actions = isEditor
     ? `<div class="draw-actions" id="draw-actions">
          <span class="draw-status" id="draw-status" role="status" aria-live="polite"></span>
+         <button class="btn" id="draw-reset" type="button">reset</button>
          <button class="btn btn--primary" id="draw-save" type="button">${opts.mode === "edit" ? "save" : "publish"}</button>
+       </div>
+       <div class="reset-confirm" id="reset-confirm" role="dialog" aria-label="Reset canvas" hidden>
+         <p class="reset-confirm-q">Clear the canvas? This permanently removes everything on it.</p>
+         <div class="reset-confirm-row">
+           <button class="btn" id="reset-cancel" type="button">cancel</button>
+           <button class="btn btn--danger" id="reset-yes" type="button">reset</button>
+         </div>
        </div>`
     : opts.isOwner && opts.slug
       ? `<div class="draw-actions" id="draw-actions"><a class="btn btn--primary" href="/${esc(opts.slug)}/edit">edit</a></div>`
