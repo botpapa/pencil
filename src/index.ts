@@ -17,11 +17,18 @@ const app = new Hono<AppEnv>();
 
 app.use("*", securityHeaders);
 
-// Host dispatch: draw.pencil.md (and draw.localhost for dev) is its own app.
-// Runs after securityHeaders so the draw responses still get the CSP/headers.
+// Host dispatch: any "draw.*" host (draw.pencil.md in prod, draw.localhost in
+// dev) is its own app. Derive the host from the request URL — the Host header
+// isn't always present (e.g. in the test runtime). Runs after securityHeaders
+// so the draw responses still get the CSP/headers.
 app.use("*", async (c, next) => {
-  const host = (c.req.header("host") ?? "").split(":")[0]!.toLowerCase();
-  if (host === "draw.pencil.md" || host.startsWith("draw.localhost")) {
+  let host = "";
+  try {
+    host = new URL(c.req.url).hostname.toLowerCase();
+  } catch {
+    /* malformed URL — fall through to the main app */
+  }
+  if (host.startsWith("draw.")) {
     return draw.fetch(c.req.raw, c.env, c.executionCtx);
   }
   await next();

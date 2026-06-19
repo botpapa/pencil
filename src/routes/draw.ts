@@ -23,6 +23,7 @@ import {
   setDrawingPassword,
 } from "../lib/drawdb.js";
 import { isValidSlug, newSlug } from "../lib/slug.js";
+import { rejectIfOversize } from "../lib/limits.js";
 import { bytesOf, originUrl, normalizeTitle, validateTitleField } from "../lib/http.js";
 import { drawEditorPage, drawReaderPage, drawNotFound } from "../views/draw.js";
 import {
@@ -41,7 +42,13 @@ const EMPTY_SCENE = JSON.stringify({
   viewport: { x: 0, y: 0, zoom: 1 },
 });
 
-// Lightweight scene validation: valid JSON, expected top-level shape, capped.
+// Image element URLs must reference an image we issued (same-origin /img/<name>),
+// never an arbitrary external URL — otherwise a crafted/shared scene could make
+// every viewer's browser fetch attacker-controlled URLs (tracking / IP leak).
+const SAFE_IMG_URL = /^\/img\/[A-Za-z0-9._-]+$/;
+
+// Scene validation: valid JSON, expected top-level shape, size-capped, and every
+// image element points at one of our own uploaded images.
 function validateScene(raw: unknown): { ok: true; scene: string } | { ok: false; status: 400 | 413; error: string } {
   if (typeof raw !== "string") return { ok: false, status: 400, error: "scene must be a string" };
   if (bytesOf(raw) > MAX_SCENE_BYTES) return { ok: false, status: 413, error: "scene too large" };
@@ -51,8 +58,17 @@ function validateScene(raw: unknown): { ok: true; scene: string } | { ok: false;
   } catch {
     return { ok: false, status: 400, error: "scene is not valid JSON" };
   }
-  if (typeof parsed !== "object" || parsed === null || !Array.isArray((parsed as { elements?: unknown }).elements)) {
+  const elements = (parsed as { elements?: unknown })?.elements;
+  if (typeof parsed !== "object" || parsed === null || !Array.isArray(elements)) {
     return { ok: false, status: 400, error: "scene shape invalid" };
+  }
+  for (const el of elements) {
+    if (el && typeof el === "object" && (el as { type?: unknown }).type === "image") {
+      const url = (el as { url?: unknown }).url;
+      if (typeof url !== "string" || !SAFE_IMG_URL.test(url)) {
+        return { ok: false, status: 400, error: "invalid image reference" };
+      }
+    }
   }
   return { ok: true, scene: raw };
 }
@@ -99,7 +115,12 @@ app.get("/", async (c) => {
 
 // ---------- create ----------
 
+// Body cap = scene (2 MB) + thumbnail data-URL (~1.3 MB) + title/password slack.
+const MAX_DRAW_BODY_BYTES = MAX_SCENE_BYTES + 2 * 1024 * 1024;
+
 app.post("/", async (c) => {
+  const tooBig = rejectIfOversize(c, MAX_DRAW_BODY_BYTES);
+  if (tooBig) return tooBig;
   await ensureOwnerCookie(c);
   const ownerId = c.get("ownerId");
 
@@ -191,6 +212,8 @@ app.get("/:slug/edit", async (c) => {
 // ---------- update ----------
 
 app.put("/:slug", async (c) => {
+  const tooBig = rejectIfOversize(c, MAX_DRAW_BODY_BYTES);
+  if (tooBig) return tooBig;
   const slug = c.req.param("slug");
   if (!isValidSlug(slug)) return c.json({ error: "not found" }, 404);
   const d = await getDrawing(c.env.DB, slug);
@@ -291,15 +314,18 @@ app.post("/api/images", async (c) => {
   await ensureOwnerCookie(c);
   const ct = c.req.header("Content-Type") ?? "";
   if (!ALLOWED_IMAGE_TYPES.includes(ct)) return c.json({ error: "unsupported image type" }, 415);
-  const lenHeader = c.req.header("Content-Length");
-  const len = lenHeader ? Number.parseInt(lenHeader, 10) : NaN;
-  if (Number.isFinite(len) && len > MAX_IMAGE_BYTES) return c.json({ error: "image too large" }, 413);
+  // Require a Content-Length within the cap so unknown-length / oversize bodies
+  // are rejected before we buffer them.
+  const tooBig = rejectIfOversize(c, MAX_IMAGE_BYTES);
+  if (tooBig) return tooBig;
   const buf = await c.req.arrayBuffer();
   if (buf.byteLength > MAX_IMAGE_BYTES) return c.json({ error: "image too large" }, 413);
   const ext = ct.split("/")[1]!.replace("jpeg", "jpg");
   const key = `img/${c.get("ownerId").slice(0, 6)}-${newSlug()}.${ext}`;
   await c.env.IMAGES.put(key, buf, { httpMetadata: { contentType: ct } });
-  return c.json({ url: `${originUrl(c)}/img/${key.slice(4)}`, key }, 201);
+  // Relative same-origin URL — keeps scenes host-agnostic and satisfies the
+  // SAFE_IMG_URL check in validateScene.
+  return c.json({ url: `/img/${key.slice(4)}`, key }, 201);
 });
 
 app.get("/img/:name", async (c) => {

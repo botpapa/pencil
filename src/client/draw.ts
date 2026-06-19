@@ -202,10 +202,20 @@ function renderShape(el: ShapeEl): SVGElement {
   return node;
 }
 
+// Only render images we issued (same-origin /img/…) or freshly-pasted data URLs.
+// Defense-in-depth against a crafted scene pointing img.src at an external URL
+// (the server's validateScene also rejects those on save).
+function safeImgSrc(url: string): boolean {
+  return /^\/img\/[A-Za-z0-9._-]+$/.test(url) || url.startsWith("data:image/");
+}
+
 function renderImage(el: ImageEl): HTMLElement {
   const img = document.createElement("img");
   img.className = "draw-img";
-  img.src = el.url;
+  if (safeImgSrc(el.url)) img.src = el.url;
+  img.referrerPolicy = "no-referrer";
+  img.loading = "lazy";
+  img.decoding = "async";
   img.style.left = `${el.x}px`;
   img.style.top = `${el.y}px`;
   img.style.width = `${el.w}px`;

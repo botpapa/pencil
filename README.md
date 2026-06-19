@@ -130,6 +130,24 @@ markdown-it + sanitize-html
 - Edit ownership is stored in an HMAC-signed cookie.
 - Tampered edit credentials are rejected.
 - Obvious bots and owner views are skipped by the view counter.
+- Drawing scenes are size-capped and only reference same-origin (`/img/…`)
+  images — a shared scene can't point a viewer's browser at arbitrary URLs.
+
+### Rate limiting
+
+Creation and password endpoints are intentionally unauthenticated (no signup),
+so protect them at the edge with [Cloudflare Rate Limiting](https://developers.cloudflare.com/waf/rate-limiting-rules/)
+rules rather than in the Worker. Recommended rules:
+
+| Path | Method | Suggested limit |
+| --- | --- | --- |
+| `/:slug/unlock` (both apps) | POST | 10 / minute / IP |
+| `draw.*/api/images` | POST | 30 / hour / IP |
+| `/` and `draw.*/` (create) | POST | 60 / hour / IP |
+
+In-Worker, uploads and bodies are already size-capped (`MAX_IMAGE_BYTES`,
+`MAX_SCENE_BYTES`) and require a `Content-Length`; the rate rules above bound
+*volume* and brute-force.
 
 ## Contributing
 
