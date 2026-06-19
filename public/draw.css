@@ -1,0 +1,241 @@
+/* draw.pencil.md — infinite canvas. Reuses the fonts from styles.css, but pins
+ * the PAPER theme always: a drawing stores literal colours, so the canvas must
+ * look the same (warm paper) regardless of the viewer's light/dark setting. */
+
+.draw-body {
+  --bg: #faf7f2;
+  --bg-soft: #f2eee6;
+  --ink: #1a1714;
+  --ink-soft: #4a453e;
+  --rule: #d9d2c4;
+  --rule-w: 1px;
+  --accent: #f4b400;
+  --accent-ink: #2a1f00;
+  --danger: #b83a28;
+  margin: 0;
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-serif);
+  overscroll-behavior: none;
+}
+
+/* Top bar: title (left) + actions (right). Floats over the canvas. */
+.draw-topbar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.55rem 0.9rem;
+  pointer-events: none;
+}
+.draw-topbar > * { pointer-events: auto; }
+.draw-title {
+  font-family: var(--font-serif);
+  font-size: 1.4rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--ink);
+  padding: 0.3rem 0.4rem;
+  max-width: 60vw;
+  min-width: 0;
+}
+.draw-title::placeholder { color: var(--ink-soft); font-style: italic; font-weight: 400; }
+.draw-title--read { margin: 0; }
+.draw-actions { display: flex; gap: 0.5rem; align-items: center; }
+.draw-status { font-family: var(--font-mono); font-size: 11px; color: var(--ink-soft); }
+
+/* The canvas surface + the pan/zoom world inside it. */
+.canvas-root {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  touch-action: none;
+  background: var(--bg);
+}
+.draw-world {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
+  will-change: transform;
+}
+.draw-svg {
+  position: absolute;
+  top: 0;
+  left: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+.draw-html {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 0;
+  height: 0;
+}
+
+/* Mode cursors. */
+.canvas-root.mode-draw { cursor: crosshair; }
+.canvas-root.mode-text { cursor: text; }
+.canvas-root.mode-select { cursor: default; }
+.canvas-root.panning { cursor: grabbing; }
+
+/* Text elements live on the HTML layer, positioned in world space. */
+.draw-text {
+  position: absolute;
+  transform-origin: 0 0;
+  font-family: var(--font-serif);
+  font-size: 18px;
+  line-height: 1.5;
+  color: var(--ink);
+  /* Canvas text doesn't soft-wrap (each source line is its own line); the
+   * block grows to its widest line. Authors add line breaks with Enter. */
+  white-space: pre;
+  outline: none;
+  caret-color: var(--accent);
+}
+.draw-text .md-line { white-space: pre; min-height: 1.5em; }
+.draw-text:empty::before { content: "type…"; color: var(--ink-soft); font-style: italic; }
+.draw-text.selected { box-shadow: 0 0 0 1.5px var(--accent); border-radius: 3px; }
+
+/* Live-markdown rendered spans inside a text element. */
+.draw-text .md-h1 { font-size: 1.9em; font-weight: 700; letter-spacing: -0.02em; }
+.draw-text .md-h2 { font-size: 1.5em; font-weight: 700; letter-spacing: -0.01em; }
+.draw-text .md-h3 { font-size: 1.25em; font-weight: 700; }
+.draw-text .md-h4, .draw-text .md-h5, .draw-text .md-h6 { font-weight: 700; }
+.draw-text .md-strong { font-weight: 700; }
+.draw-text .md-em { font-style: italic; }
+.draw-text .md-code {
+  font-family: var(--font-mono);
+  font-size: 0.88em;
+  background: var(--bg-soft);
+  border-radius: 3px;
+  padding: 0 0.25em;
+}
+.draw-text .md-del { text-decoration: line-through; }
+.draw-text .md-mark { background: color-mix(in srgb, var(--accent) 45%, transparent); }
+/* Syntax markers (## , **, etc.) — dimmed; hidden unless the caret is on the line. */
+.draw-text .md-mark-syntax { color: var(--ink-soft); opacity: 0.55; }
+.draw-text .md-line:not(.caret-line) .md-mark-syntax { display: none; }
+.draw-text .md-quote { border-left: 3px solid var(--accent); padding-left: 0.6em; color: var(--ink-soft); }
+.draw-text .md-li-bullet { color: var(--ink-soft); }
+
+/* Image elements. */
+.draw-img { position: absolute; transform-origin: 0 0; display: block; user-select: none; }
+.draw-img.selected { box-shadow: 0 0 0 1.5px var(--accent); }
+
+/* Floating toolbar (draw mode only): colors + tools. Bottom-center. */
+.draw-toolbar {
+  position: fixed;
+  bottom: calc(1rem + env(safe-area-inset-bottom, 0px));
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: var(--bg);
+  border: var(--rule-w) solid var(--rule);
+  border-radius: 999px;
+  padding: 0.4rem 0.6rem;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.1);
+}
+.draw-toolbar[hidden] { display: none; }
+.tool-group { display: flex; align-items: center; gap: 0.3rem; }
+.tool-sep { width: 1px; align-self: stretch; background: var(--rule); margin: 0.1rem 0.2rem; }
+.swatch {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  cursor: pointer;
+  padding: 0;
+  background: var(--c);
+}
+.swatch.active { border-color: var(--ink); }
+.tool-btn {
+  width: 34px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  border-radius: 8px;
+  cursor: pointer;
+  color: var(--ink);
+}
+.tool-btn:hover { background: var(--bg-soft); }
+.tool-btn.active { background: var(--ink); color: var(--bg); }
+.tool-btn svg { width: 18px; height: 18px; }
+
+/* Mode chip (bottom-left): shows current mode + the shortcut hint. */
+.mode-chip {
+  position: fixed;
+  bottom: calc(1rem + env(safe-area-inset-bottom, 0px));
+  left: 1rem;
+  z-index: 30;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-soft);
+  background: var(--bg);
+  border: var(--rule-w) solid var(--rule);
+  border-radius: 999px;
+  padding: 0.35rem 0.7rem;
+  user-select: none;
+}
+.mode-chip strong { color: var(--ink); }
+
+/* Zoom chip (bottom-right). */
+.zoom-chip {
+  position: fixed;
+  bottom: calc(1rem + env(safe-area-inset-bottom, 0px));
+  right: 1rem;
+  z-index: 30;
+  display: flex;
+  gap: 0.25rem;
+  align-items: center;
+}
+.zoom-chip button {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  width: 30px;
+  height: 30px;
+  border: var(--rule-w) solid var(--rule);
+  background: var(--bg);
+  border-radius: 8px;
+  cursor: pointer;
+  color: var(--ink);
+}
+.zoom-chip .zoom-level { font-size: 11px; color: var(--ink-soft); min-width: 3ch; text-align: center; }
+
+.draw-404 { display: flex; align-items: center; justify-content: center; height: 100vh; }
+.draw-404-box { text-align: center; font-family: var(--font-serif); }
+.draw-404-box .number { font-size: 4rem; font-weight: 600; margin: 0; }
+.draw-404-box .label { font-family: var(--font-mono); font-size: 12px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--ink-soft); }
+
+/* List + rule polish: show a bullet / rule when the line is rendered (caret
+ * elsewhere); reveal the raw marker when the caret is on the line. */
+.draw-text .md-li:not(.md-li-ol):not(.caret-line) > .md-content::before {
+  content: "•  ";
+  color: var(--ink-soft);
+}
+.draw-text .md-li { padding-left: 0.2em; }
+.draw-text .md-hr:not(.caret-line) {
+  border-top: 2px solid var(--rule);
+  height: 0;
+  font-size: 0;
+  line-height: 0;
+  margin: 0.7em 0;
+}

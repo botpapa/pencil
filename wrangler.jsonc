@@ -23,6 +23,10 @@
     {
       "binding": "OG_CACHE",
       "bucket_name": "pencil-og"
+    },
+    {
+      "binding": "IMAGES",
+      "bucket_name": "pencil-draw-img"
     }
   ],
 

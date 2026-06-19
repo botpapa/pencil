@@ -6,6 +6,7 @@ import pages from "./routes/pages.js";
 import api from "./routes/api.js";
 import stats from "./routes/stats.js";
 import og from "./routes/og.js";
+import draw from "./routes/draw.js";
 import { docsPage } from "./views/docs.js";
 import { aboutPage } from "./views/about.js";
 import { notFoundPage } from "./views/stats.js";
@@ -15,6 +16,16 @@ import type { AppEnv } from "./types.js";
 const app = new Hono<AppEnv>();
 
 app.use("*", securityHeaders);
+
+// Host dispatch: draw.pencil.md (and draw.localhost for dev) is its own app.
+// Runs after securityHeaders so the draw responses still get the CSP/headers.
+app.use("*", async (c, next) => {
+  const host = (c.req.header("host") ?? "").split(":")[0]!.toLowerCase();
+  if (host === "draw.pencil.md" || host.startsWith("draw.localhost")) {
+    return draw.fetch(c.req.raw, c.env, c.executionCtx);
+  }
+  await next();
+});
 
 // Health check.
 app.get("/health", (c) => c.json({ ok: true, app: c.env.APP_NAME }));

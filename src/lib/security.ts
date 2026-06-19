@@ -5,7 +5,7 @@ import type { AppEnv } from "../types.js";
 
 const CSP =
   "default-src 'self'; " +
-  "img-src 'self' https: data:; " +
+  "img-src 'self' https: data: blob:; " +
   "style-src 'self'; " +
   "script-src 'self'; " +
   "font-src 'self'; " +

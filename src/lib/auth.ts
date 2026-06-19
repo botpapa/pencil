@@ -91,12 +91,18 @@ export async function ensureOwnerCookie(c: Context<AppEnv>): Promise<string> {
     uid = newOwnerId();
     isNew = true;
     const signed = await signCookie(uid, c.env.COOKIE_SECRET);
+    // Scope the cookie to the apex so identity is shared across pencil.md and
+    // draw.pencil.md. Locally (localhost / *.localhost) we omit Domain so the
+    // browser accepts a host-only cookie.
+    const host = (c.req.header("host") ?? "").split(":")[0]!.toLowerCase();
+    const domain = host === "pencil.md" || host.endsWith(".pencil.md") ? ".pencil.md" : undefined;
     setCookie(c, COOKIE_NAME, signed, {
       httpOnly: true,
       secure: true,
       sameSite: "Lax",
       path: "/",
       maxAge: COOKIE_MAX_AGE,
+      ...(domain ? { domain } : {}),
     });
   }
   c.set("ownerId", uid);

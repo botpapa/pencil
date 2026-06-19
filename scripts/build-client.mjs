@@ -17,6 +17,7 @@ const stylesOut = join(root, "public", "styles.css");
 const BUDGETS = {
   "editor.js": 50 * 1024,
   "reader.js": 5 * 1024,
+  "draw.js": 80 * 1024,
 };
 
 async function ensureDir(d) {
@@ -61,18 +62,21 @@ async function main() {
   await Promise.all([
     bundle(join(root, "src/client/editor.ts"), join(outDir, "editor.js")),
     bundle(join(root, "src/client/reader.ts"), join(outDir, "reader.js")),
+    bundle(join(root, "src/client/draw.ts"), join(outDir, "draw.js")),
   ]);
 
-  // Copy styles.css straight through (no preprocessing).
+  // Copy stylesheets straight through (no preprocessing).
   await copyFile(join(root, "src/client/styles.css"), stylesOut);
+  await copyFile(join(root, "src/client/draw.css"), join(root, "public", "draw.css"));
 
   console.log("\nBundle sizes:");
   const ok1 = await reportSize(join(outDir, "editor.js"));
   const ok2 = await reportSize(join(outDir, "reader.js"));
+  const ok3 = await reportSize(join(outDir, "draw.js"));
   const stylesStat = await stat(stylesOut);
   console.log(`  styles.css: ${fmt(stylesStat.size)} raw`);
 
-  if (!ok1 || !ok2) {
+  if (!ok1 || !ok2 || !ok3) {
     console.error("\nERROR: bundle exceeded size budget.");
     process.exit(1);
   }
