@@ -345,6 +345,44 @@ let panStart: Pt = [0, 0];
 let panOrigin: Pt = [0, 0];
 let moving: { id: string; start: Pt; orig: { x: number; y: number } } | null = null;
 
+// Multi-touch: track active pointers; 2+ → pinch-zoom + pan gesture.
+const pointers = new Map<number, Pt>();
+let gesture: { startDist: number; worldCx: number; worldCy: number; startZoom: number } | null = null;
+
+function startGesture(): void {
+  // Cancel any in-progress single-pointer action so two fingers only zoom/pan.
+  if (drawing) { drawingNode?.remove(); drawing = null; drawingNode = null; undoStack.pop(); }
+  moving = null;
+  panning = false;
+  root.classList.remove("panning");
+  const pts = [...pointers.values()];
+  if (pts.length < 2) return;
+  const [a, b] = [pts[0]!, pts[1]!];
+  const cx = (a[0] + b[0]) / 2;
+  const cy = (a[1] + b[1]) / 2;
+  gesture = {
+    startDist: Math.hypot(a[0] - b[0], a[1] - b[1]) || 1,
+    worldCx: (cx - vp.x) / vp.zoom,
+    worldCy: (cy - vp.y) / vp.zoom,
+    startZoom: vp.zoom,
+  };
+}
+
+function moveGesture(): void {
+  if (!gesture) return;
+  const pts = [...pointers.values()];
+  if (pts.length < 2) return;
+  const [a, b] = [pts[0]!, pts[1]!];
+  const cx = (a[0] + b[0]) / 2;
+  const cy = (a[1] + b[1]) / 2;
+  const dist = Math.hypot(a[0] - b[0], a[1] - b[1]) || 1;
+  const newZoom = Math.min(8, Math.max(0.1, gesture.startZoom * (dist / gesture.startDist)));
+  vp.zoom = newZoom;
+  vp.x = cx - gesture.worldCx * newZoom;
+  vp.y = cy - gesture.worldCy * newZoom;
+  applyViewport();
+}
+
 function hitElementId(target: EventTarget | null): string | null {
   let n = target as HTMLElement | null;
   while (n && n !== root) {
@@ -355,6 +393,8 @@ function hitElementId(target: EventTarget | null): string | null {
 }
 
 root.addEventListener("pointerdown", (e) => {
+  pointers.set(e.pointerId, [e.clientX, e.clientY]);
+  if (pointers.size >= 2) { startGesture(); return; }
   if (e.button === 1 || (e.button === 0 && spaceDown)) {
     panning = true;
     panStart = [e.clientX, e.clientY];
@@ -416,6 +456,8 @@ root.addEventListener("pointerdown", (e) => {
 });
 
 root.addEventListener("pointermove", (e) => {
+  if (pointers.has(e.pointerId)) pointers.set(e.pointerId, [e.clientX, e.clientY]);
+  if (gesture) { moveGesture(); return; }
   if (panning) {
     vp.x = panOrigin[0] + (e.clientX - panStart[0]);
     vp.y = panOrigin[1] + (e.clientY - panStart[1]);
@@ -456,6 +498,8 @@ root.addEventListener("pointermove", (e) => {
 });
 
 function endPointer(e: PointerEvent): void {
+  pointers.delete(e.pointerId);
+  if (gesture) { if (pointers.size < 2) { gesture = null; if (!readOnly) scheduleDraft(); } return; }
   if (panning) { panning = false; root.classList.remove("panning"); try { root.releasePointerCapture(e.pointerId); } catch { /* */ } }
   if (moving) { moving = null; markDirty(); try { root.releasePointerCapture(e.pointerId); } catch { /* */ } }
   if (drawing) {
@@ -586,28 +630,45 @@ function imageDims(url: string): Promise<{ w: number; h: number }> {
 // ---------- mode + toolbar UI ----------
 
 let toolbar: HTMLElement | null = null;
-let modeChip: HTMLElement | null = null;
+let toolsGroup: HTMLElement | null = null;
+let modeChip: HTMLButtonElement | null = null;
+let modeBtnBar: HTMLButtonElement | null = null;
 let zoomLevel: HTMLElement | null = null;
+
+function toggleMode(): void {
+  setMode(mode === "draw" ? "text" : "draw");
+}
 
 function setMode(m: Mode): void {
   mode = m;
   root.classList.toggle("mode-draw", m === "draw");
   root.classList.toggle("mode-text", m === "text");
-  if (toolbar) toolbar.hidden = m !== "draw";
-  if (modeChip) modeChip.innerHTML = `<strong>${m}</strong> · ⌘↵ to switch`;
+  // Colours stay in both modes; only the drawing tools hide in text mode.
+  toolbar?.querySelectorAll<HTMLElement>(".tools-only").forEach((e) => { e.hidden = m !== "draw"; });
+  const label = m === "draw" ? "draw" : "text";
+  if (modeChip) modeChip.innerHTML = `<strong>${label}</strong> <span class="mode-swap">⇄</span>`;
+  // The in-toolbar (mobile) button shows the mode you'd switch TO.
+  if (modeBtnBar) modeBtnBar.innerHTML = m === "draw" ? ICON.textmode : ICON.pen;
 }
 
 function buildUI(): void {
   if (readOnly) {
     buildZoomChip();
-    setMode("draw");
     root.classList.remove("mode-draw");
     root.classList.add("mode-select");
     return;
   }
-  // toolbar
   toolbar = document.createElement("div");
   toolbar.className = "draw-toolbar";
+
+  // Mobile mode toggle (Cmd+Enter isn't available on touch). Hidden on desktop
+  // via CSS, where the bottom-left chip handles it.
+  modeBtnBar = document.createElement("button");
+  modeBtnBar.className = "tool-btn toolbar-mode-btn";
+  modeBtnBar.title = "switch draw / text";
+  modeBtnBar.addEventListener("click", toggleMode);
+  add(toolbar, modeBtnBar, sep());
+
   const colorGroup = document.createElement("div");
   colorGroup.className = "tool-group";
   for (const c of COLORS) {
@@ -626,7 +687,12 @@ function buildUI(): void {
     });
     add(colorGroup, b);
   }
-  add(toolbar, colorGroup, sep());
+  add(toolbar, colorGroup);
+
+  const toolsSep = sep();
+  toolsSep.classList.add("tools-only");
+  add(toolbar, toolsSep);
+
   const tools: [Tool, string][] = [
     ["draw", ICON.pen],
     ["rect", ICON.rect],
@@ -635,8 +701,8 @@ function buildUI(): void {
     ["arrow", ICON.arrow],
     ["select", ICON.select],
   ];
-  const toolGroup = document.createElement("div");
-  toolGroup.className = "tool-group";
+  toolsGroup = document.createElement("div");
+  toolsGroup.className = "tool-group tools-only";
   for (const [t, icon] of tools) {
     const b = document.createElement("button");
     b.className = "tool-btn" + (t === tool ? " active" : "");
@@ -644,16 +710,19 @@ function buildUI(): void {
     b.title = t;
     b.addEventListener("click", () => {
       tool = t;
-      toolGroup.querySelectorAll(".tool-btn").forEach((x) => x.classList.remove("active"));
+      toolsGroup!.querySelectorAll(".tool-btn").forEach((x) => x.classList.remove("active"));
       b.classList.add("active");
     });
-    add(toolGroup, b);
+    add(toolsGroup, b);
   }
-  add(toolbar, toolGroup);
+  add(toolbar, toolsGroup);
   add(document.body, toolbar);
 
-  modeChip = document.createElement("div");
+  // Bottom-left mode toggle button (desktop).
+  modeChip = document.createElement("button");
   modeChip.className = "mode-chip";
+  modeChip.title = "switch draw / text (⌘↵)";
+  modeChip.addEventListener("click", toggleMode);
   add(document.body, modeChip);
 
   buildZoomChip();
@@ -683,6 +752,7 @@ const ICON = {
   line: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><line x1="4" y1="20" x2="20" y2="4"/></svg>`,
   arrow: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="20" x2="20" y2="4"/><polyline points="10 4 20 4 20 14"/></svg>`,
   select: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3l7.5 18 2.5-7.5L20.5 11z"/></svg>`,
+  textmode: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7V5h16v2"/><path d="M9 5v14"/><path d="M7 19h4"/></svg>`,
 };
 
 // ---------- save ----------
