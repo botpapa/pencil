@@ -26,7 +26,7 @@ interface Scene {
   viewport: { x: number; y: number; zoom: number };
 }
 
-const COLORS = ["#1A1714", "#F4B400", "#B83A28", "#2F6F4E", "#2B5C8A"];
+const COLORS = ["#1A1714", "#F4B400", "#B83A28", "#2F6F4E", "#2B5C8A", "#FFFFFF"];
 const SVGNS = "http://www.w3.org/2000/svg";
 
 
@@ -367,7 +367,16 @@ function worldBox(el: El): { x: number; y: number; w: number; h: number } | null
     const node = elNodes.get(el.id) as HTMLElement | undefined;
     return { x: el.x, y: el.y, w: node ? node.offsetWidth : 120, h: node ? node.offsetHeight : 30 };
   }
+  if (el.type === "shape") {
+    return { x: Math.min(el.x, el.x + el.w), y: Math.min(el.y, el.y + el.h), w: Math.abs(el.w), h: Math.abs(el.h) };
+  }
   return null;
+}
+
+// A selected shape shows resize handles only when it has area (rect/ellipse);
+// lines/arrows/strokes are move-only.
+function isResizable(el: El): boolean {
+  return el.type === "image" || el.type === "text" || (el.type === "shape" && (el.shape === "rect" || el.shape === "ellipse"));
 }
 
 function updateSelectionOverlay(): void {
@@ -375,7 +384,7 @@ function updateSelectionOverlay(): void {
   const el = selectedId ? scene.elements.find((x) => x.id === selectedId) : null;
   const node = el ? elNodes.get(el.id) : null;
   // Overlay shows only in transform mode (move/resize), never during editing.
-  if (!el || !node || (el.type !== "text" && el.type !== "image") || !transformSelected) {
+  if (!el || !node || (el.type !== "text" && el.type !== "image" && el.type !== "shape") || !transformSelected) {
     selOverlay.hidden = true;
     return;
   }
@@ -391,20 +400,22 @@ function updateSelectionOverlay(): void {
 function onOverlayDown(e: PointerEvent): void {
   if (e.target !== selOverlay) return; // handles handle themselves
   e.preventDefault();
-  const el = scene.elements.find((x) => x.id === selectedId) as (TextEl | ImageEl) | undefined;
+  const el = scene.elements.find((x) => x.id === selectedId) as (TextEl | ImageEl | ShapeEl) | undefined;
   if (!el) return;
   pushHistory();
   const startW = toWorld(e.clientX, e.clientY);
   const ox = el.x, oy = el.y;
   try { selOverlay!.setPointerCapture(e.pointerId); } catch { /* */ }
   const node = elNodes.get(el.id) as HTMLElement | undefined;
+  const isHtml = el.type === "text" || el.type === "image";
   const move = (ev: PointerEvent): void => {
     const w = toWorld(ev.clientX, ev.clientY);
     el.x = ox + (w[0] - startW[0]);
     el.y = oy + (w[1] - startW[1]);
-    // Update the existing node in place — never remount mid-drag (remounting a
-    // text block recreates its editor + re-parses markdown every frame = jank).
-    if (node) { node.style.left = `${el.x}px`; node.style.top = `${el.y}px`; }
+    // HTML elements update in place (remounting a text block recreates its
+    // editor every frame); SVG shapes just re-render (cheap).
+    if (isHtml && node) { node.style.left = `${el.x}px`; node.style.top = `${el.y}px`; }
+    else if (el.type === "shape") remountEl(el);
     updateSelectionOverlay();
   };
   const up = (): void => {
@@ -421,7 +432,7 @@ function onOverlayDown(e: PointerEvent): void {
 function startResize(e: PointerEvent, corner: "nw" | "ne" | "sw" | "se"): void {
   e.preventDefault();
   e.stopPropagation();
-  const el = scene.elements.find((x) => x.id === selectedId) as (TextEl | ImageEl) | undefined;
+  const el = scene.elements.find((x) => x.id === selectedId) as (TextEl | ImageEl | ShapeEl) | undefined;
   if (!el) return;
   const box = worldBox(el);
   if (!box) return;
@@ -445,6 +456,9 @@ function startResize(e: PointerEvent, corner: "nw" | "ne" | "sw" | "se"): void {
     if (el.type === "image") {
       el.w = nw; el.h = nh; el.x = nx; el.y = ny;
       if (node) { node.style.width = `${nw}px`; node.style.height = `${nh}px`; node.style.left = `${nx}px`; node.style.top = `${ny}px`; }
+    } else if (el.type === "shape") {
+      el.x = nx; el.y = ny; el.w = nw; el.h = nh;
+      remountEl(el); // re-render the SVG at the new box
     } else {
       el.fontSize = Math.max(MIN_FONT, origFont * s); el.x = nx; el.y = ny;
       if (node) { node.style.fontSize = `${el.fontSize}px`; node.style.left = `${nx}px`; node.style.top = `${ny}px`; }
@@ -500,6 +514,7 @@ function markDirty(): void {
   dirty = true;
   if (statusEl) statusEl.textContent = "unsaved";
   scheduleDraft();
+  afterViewportChange(); // content may now be on/off screen → refresh "back to content"
 }
 let draftTimer: ReturnType<typeof setTimeout> | undefined;
 function scheduleDraft(): void {
@@ -674,6 +689,32 @@ function eraseAt(wx: number, wy: number): void {
   if (removed) { scene.elements = survivors; erasedAny = true; }
 }
 
+// Shapes + strokes live on an SVG layer with pointer-events:none (so empty
+// space stays drawable), so they can't be hit via the DOM — pick them by
+// geometry instead. Returns the topmost shape/stroke under the point.
+function shapeHit(el: ShapeEl, wx: number, wy: number, slop: number): boolean {
+  if (el.shape === "line" || el.shape === "arrow") {
+    return distToSeg(wx, wy, el.x, el.y, el.x + el.w, el.y + el.h) <= slop + el.width / 2;
+  }
+  const x = Math.min(el.x, el.x + el.w), y = Math.min(el.y, el.y + el.h);
+  const w = Math.abs(el.w), h = Math.abs(el.h);
+  if (wx < x - slop || wx > x + w + slop || wy < y - slop || wy > y + h + slop) return false;
+  if (el.fill) return true; // filled: grab anywhere inside
+  // unfilled: only near the outline (so clicks in the hollow interior still draw)
+  return Math.abs(wx - x) <= slop || Math.abs(wx - (x + w)) <= slop ||
+    Math.abs(wy - y) <= slop || Math.abs(wy - (y + h)) <= slop;
+}
+
+function pickShapeAt(wx: number, wy: number): string | null {
+  const slop = 8 / vp.zoom;
+  for (let i = scene.elements.length - 1; i >= 0; i--) {
+    const el = scene.elements[i]!;
+    if (el.type === "stroke" && eraserHits(el, wx, wy, slop)) return el.id;
+    if (el.type === "shape" && shapeHit(el, wx, wy, slop)) return el.id;
+  }
+  return null;
+}
+
 root.addEventListener("pointerdown", (e) => {
   pointers.set(e.pointerId, [e.clientX, e.clientY]);
   if (pointers.size >= 2) { startGesture(); return; }
@@ -719,23 +760,30 @@ root.addEventListener("pointerdown", (e) => {
   }
 
   // draw mode
-  if (tool === "select") {
-    if (hitId) {
-      const el = scene.elements.find((x) => x.id === hitId);
-      selectEl(hitId, false);
-      if (el && (el.type === "text" || el.type === "image" || el.type === "shape" || el.type === "stroke")) {
-        const [wx, wy] = toWorld(e.clientX, e.clientY);
-        const orig = el.type === "stroke" ? { x: 0, y: 0 } : { x: (el as TextEl | ShapeEl | ImageEl).x, y: (el as TextEl | ShapeEl | ImageEl).y };
-        moving = { id: hitId, start: [wx, wy], orig };
-        try { root.setPointerCapture(e.pointerId); } catch { /* synthetic / lost pointer */ }
-      }
-    } else {
-      selectEl(null, false);
-    }
-    return;
-  }
-
   const [wx, wy] = toWorld(e.clientX, e.clientY);
+
+  // Clicking an existing element grabs it — with the select tool, but also with
+  // any drawing tool (so you can move/resize a shape without switching tools).
+  // Shapes/strokes aren't DOM-hittable, so fall back to a geometry pick.
+  if (tool !== "eraser") {
+    const pickId = hitId ?? pickShapeAt(wx, wy);
+    if (pickId || tool === "select") {
+      if (pickId) {
+        const el = scene.elements.find((x) => x.id === pickId);
+        selectEl(pickId, false);
+        if (el && (el.type === "text" || el.type === "image" || el.type === "shape" || el.type === "stroke")) {
+          transformSelected = isResizable(el); // rect/ellipse/text/image get resize handles
+          const orig = el.type === "stroke" ? { x: 0, y: 0 } : { x: (el as TextEl | ShapeEl | ImageEl).x, y: (el as TextEl | ShapeEl | ImageEl).y };
+          moving = { id: pickId, start: [wx, wy], orig };
+          updateSelectionOverlay();
+          try { root.setPointerCapture(e.pointerId); } catch { /* synthetic / lost pointer */ }
+        }
+      } else {
+        selectEl(null, false);
+      }
+      return;
+    }
+  }
 
   // eraser: remove elements as the pointer passes over them
   if (tool === "eraser") {
@@ -842,19 +890,20 @@ root.addEventListener("pointercancel", endPointer);
 // Double-click any element (in any mode) selects it for move / resize / delete.
 root.addEventListener("dblclick", (e) => {
   if (readOnly) return;
-  const id = hitElementId(e.target);
-  if (!id) return;
-  const el = scene.elements.find((x) => x.id === id);
+  const [wx, wy] = toWorld(e.clientX, e.clientY);
+  const id = hitElementId(e.target) ?? pickShapeAt(wx, wy);
+  const el = id ? scene.elements.find((x) => x.id === id) : null;
+
   if (el && (el.type === "text" || el.type === "image")) {
     e.preventDefault();
     (document.activeElement as HTMLElement | null)?.blur?.();
     transformSelected = true;
-    selectEl(id, false);
+    selectEl(id!, false);
     // For text, focus it and highlight all its content so it reads as
     // "selected" (and typing replaces it). Set the range after the focus-driven
     // re-render (which would otherwise collapse it to a caret).
     if (el.type === "text") {
-      const node = elNodes.get(id) as HTMLElement | undefined;
+      const node = elNodes.get(id!) as HTMLElement | undefined;
       if (node) {
         node.focus(); // focus fires its re-render synchronously…
         const r = document.createRange(); // …then we set the full selection after it
@@ -865,8 +914,88 @@ root.addEventListener("dblclick", (e) => {
         updateSelectionOverlay();
       }
     }
+    return;
+  }
+  if (el && (el.type === "shape" || el.type === "stroke")) {
+    // double-clicking a shape/stroke selects it for move / resize / delete
+    e.preventDefault();
+    (document.activeElement as HTMLElement | null)?.blur?.();
+    transformSelected = isResizable(el);
+    selectEl(id!, false);
+    return;
+  }
+  // Empty space while drawing: drop a text block here and start typing, without
+  // leaving draw mode.
+  if (mode === "draw") {
+    e.preventDefault();
+    const tel: TextEl = { id: uid(), type: "text", x: wx, y: wy, md: "", color, fontSize: textSize };
+    pushHistory();
+    scene.elements.push(tel);
+    mountEl(tel);
+    markDirty();
+    requestAnimationFrame(() => editors.get(tel.id)?.el.focus());
   }
 });
+
+// ---------- right-click: reorder (front / back) + delete ----------
+
+// Reorder within the element list (= paint order). Cross-layer stacking is
+// fixed (text/images always sit above shapes), so this reorders within a layer.
+function reorder(id: string, toFront: boolean): void {
+  const i = scene.elements.findIndex((e) => e.id === id);
+  if (i < 0) return;
+  pushHistory();
+  const [el] = scene.elements.splice(i, 1);
+  if (!el) return;
+  const node = elNodes.get(id);
+  const parent = node?.parentElement;
+  if (toFront) { scene.elements.push(el); if (node && parent) parent.appendChild(node); }
+  else { scene.elements.unshift(el); if (node && parent) parent.insertBefore(node, parent.firstChild); }
+  markDirty();
+}
+
+let ctxMenu: HTMLElement | null = null;
+function hideContextMenu(): void { ctxMenu?.remove(); ctxMenu = null; }
+function showContextMenu(x: number, y: number, id: string): void {
+  hideContextMenu();
+  ctxMenu = document.createElement("div");
+  ctxMenu.className = "ctx-menu";
+  ctxMenu.style.left = `${x}px`;
+  ctxMenu.style.top = `${y}px`;
+  const item = (label: string, fn: () => void): HTMLElement => {
+    const b = document.createElement("button");
+    b.className = "ctx-item";
+    b.type = "button";
+    b.textContent = label;
+    b.addEventListener("click", () => { fn(); hideContextMenu(); });
+    return b;
+  };
+  add(
+    ctxMenu,
+    item("Bring to front", () => reorder(id, true)),
+    item("Send to back", () => reorder(id, false)),
+    item("Delete", () => { selectEl(id, false); deleteSelected(); }),
+  );
+  add(document.body, ctxMenu);
+  // Keep the menu on-screen if it opened near the right/bottom edge.
+  const r = ctxMenu.getBoundingClientRect();
+  if (r.right > window.innerWidth) ctxMenu.style.left = `${window.innerWidth - r.width - 6}px`;
+  if (r.bottom > window.innerHeight) ctxMenu.style.top = `${window.innerHeight - r.height - 6}px`;
+}
+
+root.addEventListener("contextmenu", (e) => {
+  if (readOnly) return;
+  const [wx, wy] = toWorld(e.clientX, e.clientY);
+  const id = hitElementId(e.target) ?? pickShapeAt(wx, wy);
+  if (!id) { hideContextMenu(); return; } // empty canvas → native menu
+  e.preventDefault();
+  selectEl(id, false);
+  showContextMenu(e.clientX, e.clientY, id);
+});
+// Dismiss the menu on any press outside it.
+window.addEventListener("pointerdown", (e) => {
+  if (ctxMenu && !ctxMenu.contains(e.target as Node)) hideContextMenu();
+}, true);
 
 // ---------- zoom (wheel + buttons) + pinch ----------
 
@@ -926,6 +1055,7 @@ window.addEventListener("keydown", (e) => {
     deleteSelected();
   }
   if (e.key === "Escape") {
+    hideContextMenu();
     transformSelected = false;
     selectEl(null, false);
     (document.activeElement as HTMLElement | null)?.blur?.();
@@ -1017,8 +1147,20 @@ function contentVisible(): boolean {
 
 // Runs after every viewport change: toggle the read-mode button and keep the
 // editor hand-off link pointed at the current view.
+let backHideTimer: ReturnType<typeof setTimeout> | undefined;
 function afterViewportChange(): void {
-  if (backBtn) backBtn.hidden = contentVisible();
+  if (backBtn) {
+    if (contentVisible()) {
+      // Content is on screen (incl. anything just drawn here) — no need to jump.
+      backBtn.hidden = true;
+      if (backHideTimer) { clearTimeout(backHideTimer); backHideTimer = undefined; }
+    } else {
+      backBtn.hidden = false;
+      // Auto-dismiss after a while so it doesn't linger if you meant to be here.
+      if (backHideTimer) clearTimeout(backHideTimer);
+      backHideTimer = setTimeout(() => { if (backBtn) backBtn.hidden = true; }, 10000);
+    }
+  }
   if (editLink) editLink.hash = `v=${Math.round(vp.x)},${Math.round(vp.y)},${vp.zoom.toFixed(3)}`;
   updateSelectionOverlay();
 }
@@ -1290,8 +1432,20 @@ function buildUI(): void {
   modeChip.addEventListener("click", toggleMode);
   add(document.body, modeChip);
 
+  // "Back to content" — same as read mode, but also in the editor: shows when
+  // the content is off-screen (scrolled/zoomed away), auto-hides after 10s or as
+  // soon as content is back in view (e.g. you drew something here).
+  backBtn = document.createElement("button");
+  backBtn.className = "back-to-content";
+  backBtn.type = "button";
+  backBtn.textContent = "↻ back to the content";
+  backBtn.hidden = true;
+  backBtn.addEventListener("click", () => { fitToContent(); });
+  add(document.body, backBtn);
+
   buildZoomChip();
   setMode("draw");
+  afterViewportChange();
 }
 
 function buildZoomChip(): void {
@@ -1318,7 +1472,7 @@ const ICON = {
   arrow: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="20" x2="20" y2="4"/><polyline points="10 4 20 4 20 14"/></svg>`,
   select: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3l7.5 18 2.5-7.5L20.5 11z"/></svg>`,
   eraser: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 15.5L13 6.5a2 2 0 0 1 2.8 0l3.7 3.7a2 2 0 0 1 0 2.8L13 19.5H7.5z"/><line x1="9" y1="20" x2="20" y2="20"/></svg>`,
-  textmode: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7V5h16v2"/><path d="M9 5v14"/><path d="M7 19h4"/></svg>`,
+  textmode: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 6h14"/><path d="M12 6v13"/></svg>`,
   solid: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><line x1="4" y1="12" x2="20" y2="12"/></svg>`,
   dashed: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-dasharray="5 4"><line x1="4" y1="12" x2="20" y2="12"/></svg>`,
   dotted: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-dasharray="0.1 5"><line x1="4" y1="12" x2="20" y2="12"/></svg>`,
