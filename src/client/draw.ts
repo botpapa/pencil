@@ -10,11 +10,12 @@ import { TextEditor } from "./lib/textEditor.js";
 // ---------- model ----------
 
 type Pt = [number, number];
-type Tool = "draw" | "select" | "rect" | "ellipse" | "line" | "arrow";
+type Tool = "draw" | "select" | "rect" | "ellipse" | "line" | "arrow" | "eraser";
 type Mode = "draw" | "text";
+type Dash = "solid" | "dashed" | "dotted";
 
-interface StrokeEl { id: string; type: "stroke"; points: Pt[]; color: string; width: number; }
-interface ShapeEl { id: string; type: "shape"; shape: "rect" | "ellipse" | "line" | "arrow"; x: number; y: number; w: number; h: number; color: string; width: number; }
+interface StrokeEl { id: string; type: "stroke"; points: Pt[]; color: string; width: number; dash?: Dash; }
+interface ShapeEl { id: string; type: "shape"; shape: "rect" | "ellipse" | "line" | "arrow"; x: number; y: number; w: number; h: number; color: string; width: number; dash?: Dash; fill?: boolean; }
 interface TextEl { id: string; type: "text"; x: number; y: number; md: string; color: string; fontSize: number; }
 interface ImageEl { id: string; type: "image"; x: number; y: number; w: number; h: number; url: string; }
 type El = StrokeEl | ShapeEl | TextEl | ImageEl;
@@ -68,7 +69,10 @@ const scene = loadScene();
 let mode: Mode = "draw";
 let tool: Tool = "draw";
 let color = COLORS[0]!;
-let strokeWidth = 3;
+let strokeWidth = 3; // border / stroke thickness for the next drawn element
+let dashStyle: Dash = "solid"; // border style for the next drawn element
+let fillShapes = false; // whether new rect/ellipse are filled with the colour
+let eraserWidth = 24; // eraser hit radius (world px)
 let textSize = 18; // font size (px) for the next text block; tracks the size bar
 let selectedId: string | null = null;
 // True when an element is selected for transform (move/resize handles shown).
@@ -134,6 +138,14 @@ function strokePath(points: Pt[]): string {
   return d;
 }
 
+// Translate a dash style into an SVG stroke-dasharray (scaled to the stroke
+// width). Returns "" for solid. Dotted needs round line-caps to render as dots.
+function dashArray(dash: Dash | undefined, w: number): string {
+  if (dash === "dashed") return `${(w * 2.5).toFixed(1)} ${(w * 1.8).toFixed(1)}`;
+  if (dash === "dotted") return `0.1 ${(w * 1.8).toFixed(1)}`;
+  return "";
+}
+
 function renderStroke(el: StrokeEl): SVGElement {
   const p = document.createElementNS(SVGNS, "path");
   p.setAttribute("d", strokePath(el.points));
@@ -142,6 +154,8 @@ function renderStroke(el: StrokeEl): SVGElement {
   p.setAttribute("stroke-width", String(el.width));
   p.setAttribute("stroke-linecap", "round");
   p.setAttribute("stroke-linejoin", "round");
+  const da = dashArray(el.dash, el.width);
+  if (da) p.setAttribute("stroke-dasharray", da);
   return p;
 }
 
@@ -175,6 +189,8 @@ function renderShape(el: ShapeEl): SVGElement {
     line.setAttribute("stroke", el.color);
     line.setAttribute("stroke-width", String(el.width));
     line.setAttribute("stroke-linecap", "round");
+    const lda = dashArray(el.dash, el.width);
+    if (lda) line.setAttribute("stroke-dasharray", lda);
     add(g, line);
     if (el.shape === "arrow") {
       const ang = Math.atan2(el.h, el.w);
@@ -196,9 +212,14 @@ function renderShape(el: ShapeEl): SVGElement {
     }
     return g;
   }
-  node.setAttribute("fill", "none");
+  node.setAttribute("fill", el.fill ? el.color : "none");
   node.setAttribute("stroke", el.color);
   node.setAttribute("stroke-width", String(el.width));
+  const da = dashArray(el.dash, el.width);
+  if (da) {
+    node.setAttribute("stroke-dasharray", da);
+    if (el.dash === "dotted") node.setAttribute("stroke-linecap", "round");
+  }
   return node;
 }
 
@@ -495,6 +516,8 @@ function saveDraft(): void {
 
 let drawing: StrokeEl | ShapeEl | null = null;
 let drawingNode: SVGElement | null = null;
+let erasing = false; // mid-drag with the eraser tool
+let erasedAny = false; // whether the current eraser drag removed anything
 let panning = false;
 let panStart: Pt = [0, 0];
 let panOrigin: Pt = [0, 0];
@@ -545,6 +568,61 @@ function hitElementId(target: EventTarget | null): string | null {
     n = n.parentElement;
   }
   return null;
+}
+
+// Shortest distance from a point to a line segment (world coords).
+function distToSeg(px: number, py: number, ax: number, ay: number, bx: number, by: number): number {
+  const dx = bx - ax, dy = by - ay;
+  const len2 = dx * dx + dy * dy;
+  let t = len2 ? ((px - ax) * dx + (py - ay) * dy) / len2 : 0;
+  t = Math.max(0, Math.min(1, t));
+  const cx = ax + t * dx, cy = ay + t * dy;
+  return Math.hypot(px - cx, py - cy);
+}
+
+// Does the eraser (centred at world wx,wy with radius r) touch this element?
+function eraserHits(el: El, wx: number, wy: number, r: number): boolean {
+  if (el.type === "stroke") {
+    const pad = r + el.width / 2;
+    for (let i = 0; i < el.points.length; i++) {
+      const a = el.points[i]!;
+      const b = el.points[i + 1] ?? a;
+      if (distToSeg(wx, wy, a[0], a[1], b[0], b[1]) <= pad) return true;
+    }
+    return false;
+  }
+  if (el.type === "shape") {
+    if (el.shape === "line" || el.shape === "arrow") {
+      return distToSeg(wx, wy, el.x, el.y, el.x + el.w, el.y + el.h) <= r + el.width / 2;
+    }
+    const x = Math.min(el.x, el.x + el.w), y = Math.min(el.y, el.y + el.h);
+    const w = Math.abs(el.w), h = Math.abs(el.h);
+    return wx >= x - r && wx <= x + w + r && wy >= y - r && wy <= y + h + r;
+  }
+  // text / image: bounding box (size from the live node when available)
+  const node = elNodes.get(el.id) as HTMLElement | undefined;
+  const w = node?.offsetWidth ?? (el as ImageEl).w ?? 0;
+  const h = node?.offsetHeight ?? (el as ImageEl).h ?? 0;
+  return wx >= el.x - r && wx <= el.x + w + r && wy >= el.y - r && wy <= el.y + h + r;
+}
+
+// Remove every element the eraser touches at this point.
+function eraseAt(wx: number, wy: number): void {
+  const r = eraserWidth / vp.zoom; // keep the hit area constant in screen px
+  const survivors: El[] = [];
+  let removed = false;
+  for (const el of scene.elements) {
+    if (eraserHits(el, wx, wy, r)) {
+      if (el.type === "text") editors.delete(el.id);
+      elNodes.get(el.id)?.remove();
+      elNodes.delete(el.id);
+      if (selectedId === el.id) { selectedId = null; transformSelected = false; updateSelectionOverlay(); }
+      removed = true;
+    } else {
+      survivors.push(el);
+    }
+  }
+  if (removed) { scene.elements = survivors; erasedAny = true; }
 }
 
 root.addEventListener("pointerdown", (e) => {
@@ -600,13 +678,24 @@ root.addEventListener("pointerdown", (e) => {
     return;
   }
 
-  // freehand or shape
   const [wx, wy] = toWorld(e.clientX, e.clientY);
+
+  // eraser: remove elements as the pointer passes over them
+  if (tool === "eraser") {
+    pushHistory();
+    erasing = true;
+    erasedAny = false;
+    eraseAt(wx, wy);
+    try { root.setPointerCapture(e.pointerId); } catch { /* */ }
+    return;
+  }
+
+  // freehand or shape
   pushHistory();
   if (tool === "draw") {
-    drawing = { id: uid(), type: "stroke", points: [[wx, wy]], color, width: strokeWidth };
+    drawing = { id: uid(), type: "stroke", points: [[wx, wy]], color, width: strokeWidth, dash: dashStyle };
   } else {
-    drawing = { id: uid(), type: "shape", shape: tool, x: wx, y: wy, w: 0, h: 0, color, width: strokeWidth };
+    drawing = { id: uid(), type: "shape", shape: tool, x: wx, y: wy, w: 0, h: 0, color, width: strokeWidth, dash: dashStyle, fill: (tool === "rect" || tool === "ellipse") && fillShapes };
   }
   drawingNode = (drawing.type === "stroke" ? renderStroke(drawing) : renderShape(drawing)) as SVGElement;
   drawingNode.setAttribute("data-id", drawing.id);
@@ -640,6 +729,11 @@ root.addEventListener("pointermove", (e) => {
     if (selectedId === el.id) elNodes.get(el.id)?.classList.add("selected");
     return;
   }
+  if (erasing) {
+    const [wx, wy] = toWorld(e.clientX, e.clientY);
+    eraseAt(wx, wy);
+    return;
+  }
   if (drawing) {
     const [wx, wy] = toWorld(e.clientX, e.clientY);
     if (drawing.type === "stroke") {
@@ -661,6 +755,13 @@ function endPointer(e: PointerEvent): void {
   if (gesture) { if (pointers.size < 2) { gesture = null; if (!readOnly) scheduleDraft(); } return; }
   if (panning) { panning = false; root.classList.remove("panning"); try { root.releasePointerCapture(e.pointerId); } catch { /* */ } }
   if (moving) { moving = null; markDirty(); try { root.releasePointerCapture(e.pointerId); } catch { /* */ } }
+  if (erasing) {
+    erasing = false;
+    if (erasedAny) markDirty();
+    else undoStack.pop(); // nothing erased — drop the snapshot taken on down
+    try { root.releasePointerCapture(e.pointerId); } catch { /* */ }
+    return;
+  }
   if (drawing) {
     // discard zero-size shapes / single-point strokes
     const keep = drawing.type === "stroke" ? drawing.points.length > 1 : Math.abs(drawing.w) + Math.abs(drawing.h) > 4;
@@ -862,6 +963,7 @@ function afterViewportChange(): void {
 
 let toolbar: HTMLElement | null = null;
 let toolsGroup: HTMLElement | null = null;
+let optionsBar: HTMLElement | null = null;
 let modeChip: HTMLButtonElement | null = null;
 let modeBtnBar: HTMLButtonElement | null = null;
 let sizeInput: HTMLInputElement | null = null;
@@ -879,6 +981,8 @@ function setMode(m: Mode): void {
   // shows in text.
   toolbar?.querySelectorAll<HTMLElement>(".tools-only").forEach((e) => { e.hidden = m !== "draw"; });
   toolbar?.querySelectorAll<HTMLElement>(".text-only").forEach((e) => { e.hidden = m !== "text"; });
+  if (m === "draw") updateToolOptions();
+  else if (optionsBar) optionsBar.hidden = true;
   const label = m === "draw" ? "draw" : "text";
   if (modeChip) modeChip.innerHTML = `<strong>${label}</strong> <span class="mode-swap">⇄</span> <kbd class="kbd-hint">${MOD}↵</kbd>`;
   if (modeBtnBar) modeBtnBar.innerHTML = m === "draw" ? ICON.textmode : ICON.pen;
@@ -899,6 +1003,101 @@ function applyTextSize(n: number): void {
 function reflectTextSize(n: number): void {
   textSize = n;
   if (sizeInput) sizeInput.value = String(Math.round(n));
+}
+
+// ---------- per-tool options (thickness / border style / fill) ----------
+
+const THICK_PEN = [2, 4, 8]; // pen + shape border widths
+const THICK_ERASER = [16, 28, 48]; // eraser radii (world px)
+
+// Apply a change to the selected stroke/shape too, so the bar edits the current
+// element as well as the next-drawn default (mirrors the colour row).
+function applyToSelected(fn: (el: StrokeEl | ShapeEl) => void): void {
+  if (!selectedId) return;
+  const el = scene.elements.find((x) => x.id === selectedId);
+  if (el && (el.type === "stroke" || el.type === "shape")) {
+    pushHistory();
+    fn(el);
+    remountEl(el);
+    selectEl(selectedId, false);
+    markDirty();
+  }
+}
+
+function setTool(t: Tool): void {
+  tool = t;
+  root.classList.toggle("tool-eraser", t === "eraser");
+  root.classList.toggle("tool-select", t === "select");
+  toolsGroup?.querySelectorAll<HTMLElement>(".tool-btn").forEach((x) => x.classList.toggle("active", x.dataset.tool === t));
+  updateToolOptions();
+}
+
+function optGroup(): HTMLElement { const g = document.createElement("div"); g.className = "opt-group"; return g; }
+function optSep(): HTMLElement { const s = document.createElement("div"); s.className = "opt-sep"; return s; }
+
+// Rebuild the contextual options bar for the active tool.
+function updateToolOptions(): void {
+  if (!optionsBar) return;
+  if (mode !== "draw" || tool === "select") { optionsBar.hidden = true; return; }
+  optionsBar.innerHTML = "";
+
+  const isEraser = tool === "eraser";
+  const isFillable = tool === "rect" || tool === "ellipse";
+
+  // Thickness — three steps.
+  const widths = isEraser ? THICK_ERASER : THICK_PEN;
+  const current = isEraser ? eraserWidth : strokeWidth;
+  const thick = optGroup();
+  widths.forEach((w, i) => {
+    const b = document.createElement("button");
+    b.className = "opt-btn opt-thick" + (current === w ? " active" : "");
+    b.title = ["thin", "medium", "thick"][i]!;
+    b.innerHTML = `<span class="opt-dot" style="--d:${4 + i * 4}px"></span>`;
+    b.addEventListener("click", () => {
+      if (isEraser) eraserWidth = w;
+      else { strokeWidth = w; applyToSelected((el) => { el.width = w; }); }
+      updateToolOptions();
+    });
+    add(thick, b);
+  });
+  add(optionsBar, thick);
+
+  // Border style — solid / dashed / dotted (not for the eraser).
+  if (!isEraser) {
+    add(optionsBar, optSep());
+    const styles: [Dash, string][] = [["solid", ICON.solid], ["dashed", ICON.dashed], ["dotted", ICON.dotted]];
+    const g = optGroup();
+    for (const [d, icon] of styles) {
+      const b = document.createElement("button");
+      b.className = "opt-btn" + (dashStyle === d ? " active" : "");
+      b.title = d;
+      b.innerHTML = icon;
+      b.addEventListener("click", () => {
+        dashStyle = d;
+        applyToSelected((el) => { el.dash = d; });
+        updateToolOptions();
+      });
+      add(g, b);
+    }
+    add(optionsBar, g);
+  }
+
+  // Fill toggle — rectangles + ellipses only.
+  if (isFillable) {
+    add(optionsBar, optSep());
+    const b = document.createElement("button");
+    b.className = "opt-btn opt-fill" + (fillShapes ? " active" : "");
+    b.title = "fill";
+    b.innerHTML = ICON.fill;
+    b.addEventListener("click", () => {
+      fillShapes = !fillShapes;
+      applyToSelected((el) => { if (el.type === "shape") el.fill = fillShapes; });
+      updateToolOptions();
+    });
+    add(optionsBar, b);
+  }
+
+  optionsBar.hidden = false;
 }
 
 function buildUI(): void {
@@ -959,6 +1158,7 @@ function buildUI(): void {
     ["ellipse", ICON.ellipse],
     ["line", ICON.line],
     ["arrow", ICON.arrow],
+    ["eraser", ICON.eraser],
     ["select", ICON.select],
   ];
   toolsGroup = document.createElement("div");
@@ -966,13 +1166,10 @@ function buildUI(): void {
   for (const [t, icon] of tools) {
     const b = document.createElement("button");
     b.className = "tool-btn" + (t === tool ? " active" : "");
+    b.dataset.tool = t;
     b.innerHTML = icon;
     b.title = t;
-    b.addEventListener("click", () => {
-      tool = t;
-      toolsGroup!.querySelectorAll(".tool-btn").forEach((x) => x.classList.remove("active"));
-      b.classList.add("active");
-    });
+    b.addEventListener("click", () => setTool(t));
     add(toolsGroup, b);
   }
   add(toolbar, toolsGroup);
@@ -997,6 +1194,13 @@ function buildUI(): void {
   add(toolbar, sizeSep, sizeGroup);
 
   add(document.body, toolbar);
+
+  // Contextual options for the active tool (thickness / border style / fill).
+  // Sits above the toolbar, like a second pill.
+  optionsBar = document.createElement("div");
+  optionsBar.className = "draw-options";
+  optionsBar.hidden = true;
+  add(document.body, optionsBar);
 
   // Show the ⌘S hint on the save button (Cmd/Ctrl+S already triggers save).
   if (saveBtn) {
@@ -1038,7 +1242,12 @@ const ICON = {
   line: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><line x1="4" y1="20" x2="20" y2="4"/></svg>`,
   arrow: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="20" x2="20" y2="4"/><polyline points="10 4 20 4 20 14"/></svg>`,
   select: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3l7.5 18 2.5-7.5L20.5 11z"/></svg>`,
+  eraser: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 15.5L13 6.5a2 2 0 0 1 2.8 0l3.7 3.7a2 2 0 0 1 0 2.8L13 19.5H7.5z"/><line x1="9" y1="20" x2="20" y2="20"/></svg>`,
   textmode: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7V5h16v2"/><path d="M9 5v14"/><path d="M7 19h4"/></svg>`,
+  solid: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><line x1="4" y1="12" x2="20" y2="12"/></svg>`,
+  dashed: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-dasharray="5 4"><line x1="4" y1="12" x2="20" y2="12"/></svg>`,
+  dotted: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-dasharray="0.1 5"><line x1="4" y1="12" x2="20" y2="12"/></svg>`,
+  fill: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2" fill="currentColor" fill-opacity="0.35"/></svg>`,
 };
 
 // ---------- save ----------

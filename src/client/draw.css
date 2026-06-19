@@ -380,3 +380,44 @@
 .reset-confirm-q { font-family: var(--font-mono); font-size: 12px; color: var(--ink); margin: 0 0 0.75rem; line-height: 1.45; }
 .reset-confirm-row { display: flex; gap: 0.5rem; justify-content: flex-end; }
 .reset-confirm-row .btn { font-size: 11px; padding: 0.3rem 0.6rem; }
+
+/* Contextual tool options (thickness / border style / fill) — a pill that
+ * floats just above the main toolbar and reflects the active tool. */
+.draw-options {
+  position: fixed;
+  bottom: calc(4.2rem + env(safe-area-inset-bottom, 0px));
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  background: var(--bg);
+  border: var(--rule-w) solid var(--rule);
+  border-radius: 999px;
+  padding: 0.3rem 0.5rem;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.1);
+}
+.draw-options[hidden] { display: none; }
+.opt-group { display: flex; align-items: center; gap: 0.2rem; }
+.opt-sep { width: 1px; align-self: stretch; background: var(--rule); margin: 0.1rem 0.15rem; }
+.opt-btn {
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  border-radius: 7px;
+  cursor: pointer;
+  color: var(--ink);
+  padding: 0;
+}
+.opt-btn:hover { background: var(--bg-soft); }
+.opt-btn.active { background: var(--ink); color: var(--bg); }
+.opt-btn svg { width: 16px; height: 16px; }
+.opt-dot { display: block; width: var(--d); height: var(--d); border-radius: 50%; background: currentColor; }
+
+/* Eraser cursor (a tool within draw mode — overrides the crosshair). */
+.canvas-root.tool-eraser { cursor: cell; }
