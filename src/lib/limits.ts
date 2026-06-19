@@ -66,4 +66,4 @@ export function rejectIfOversize(
 // Cap on the markdown preview endpoint — smaller than MAX_CONTENT_BYTES
 // because preview is always being typed live (no megabyte paste of an
 // existing document) and is the only unauthenticated write endpoint.
-export const PREVIEW_MAX_BYTES = 64 * 1024;
+export const PREVIEW_MAX_BYTES = 256 * 1024;

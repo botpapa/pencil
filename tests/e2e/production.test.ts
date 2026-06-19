@@ -251,8 +251,8 @@ describe("C. indexing toggle round-trip (owner cookie)", () => {
 });
 
 describe("D. limits + 404 / 500 differentiation", () => {
-  it("POST /api/v1/pages with 200 KB body is rejected with 413", async () => {
-    const body = "a".repeat(200 * 1024);
+  it("POST /api/v1/pages with 600 KB body is rejected with 413", async () => {
+    const body = "a".repeat(600 * 1024);
     const r = await fetch(`${BASE}/api/v1/pages`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -261,8 +261,8 @@ describe("D. limits + 404 / 500 differentiation", () => {
     expect(r.status).toBe(413);
   });
 
-  it("POST /api/preview with 80 KB body is rejected with 413", async () => {
-    const body = "a".repeat(80 * 1024);
+  it("POST /api/preview with 300 KB body is rejected with 413", async () => {
+    const body = "a".repeat(300 * 1024);
     const r = await fetch(`${BASE}/api/preview`, {
       method: "POST",
       headers: { "Content-Type": "text/markdown" },

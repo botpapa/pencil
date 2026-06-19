@@ -34,11 +34,11 @@ if (!titleInput || !mdInput || !saveBtn || !previewOut) {
 // "saving…" swap during a failed save attempt.
 const SAVE_BTN_LABEL = saveBtn.textContent ?? "save";
 
-// Mirror the server-side cap (128 KB UTF-8 bytes). We use Blob to get the
+// Mirror the server-side cap (512 KB UTF-8 bytes). We use Blob to get the
 // actual byte length so the client check matches what the server will accept
 // — string.length counts UTF-16 code units, which underestimates bytes for
 // any non-ASCII content (an emoji is 1 char but up to 4 bytes).
-const MAX_CONTENT_BYTES = 128 * 1024;
+const MAX_CONTENT_BYTES = 512 * 1024;
 const PREVIEW_DEBOUNCE_MS = 220;
 
 function byteLength(s: string): number {
@@ -225,7 +225,7 @@ async function save(): Promise<void> {
     // Surface an inline error and bail. The button stays enabled (re-enabled
     // below in the finally block) so the user can trim and retry.
     const kb = (bytes / 1024).toFixed(1);
-    showSaveError(`too large (${kb} KB > 128 KB)`);
+    showSaveError(`too large (${kb} KB > 512 KB)`);
     return;
   }
   clearSaveError();
@@ -310,7 +310,7 @@ titleInput.addEventListener("paste", (e) => {
   if (nl === -1) return; // single line — nothing special to do
 
   e.preventDefault();
-  const firstLine = normalized.slice(0, nl);
+  let firstLine = normalized.slice(0, nl);
   const remainder = normalized.slice(nl + 1); // everything past the first break
 
   // Splice the first line into the title at the caret, preserving any title
@@ -320,6 +320,14 @@ titleInput.addEventListener("paste", (e) => {
   const selEnd = t.selectionEnd ?? t.value.length;
   const before = t.value.slice(0, selStart);
   const after = t.value.slice(selEnd);
+
+  // If the pasted first line is a markdown heading (`#`…`######` + space) and it
+  // would land at the very start of the title — the typical "pasted a whole
+  // markdown doc" case — strip the leading heading marker. A literal `#` is
+  // almost never wanted as the first thing in a title. This only fires on the
+  // paste-split path; the user can still type or keep `#` in the title by hand.
+  if (before === "") firstLine = firstLine.replace(/^#{1,6}[ \t]+/, "");
+
   let line = before + firstLine + after;
 
   // Clamp to the cap; spill any overflow into the body rather than dropping it.

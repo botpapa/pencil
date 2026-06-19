@@ -150,7 +150,7 @@ describe("public API", () => {
   });
 
   it("rejects oversize content (413)", async () => {
-    const big = "a".repeat(129 * 1024);
+    const big = "a".repeat(513 * 1024);
     const r = await SELF.fetch("https://x/api/v1/pages", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -160,10 +160,10 @@ describe("public API", () => {
   });
 
   it("rejects oversize POST via Content-Length header before parsing", async () => {
-    // 200 KB raw body; the Content-Length gate should reject without ever
+    // 600 KB raw body; the Content-Length gate should reject without ever
     // calling c.req.json(). We verify by sending malformed JSON: if the gate
     // worked, we get 413 (size error); if it didn't, we'd get 400 (parse).
-    const big = "a".repeat(200 * 1024);
+    const big = "a".repeat(600 * 1024);
     const r = await SELF.fetch("https://x/api/v1/pages", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -179,7 +179,7 @@ describe("public API", () => {
       body: JSON.stringify({ title: "x", content: "body" }),
     });
     const { slug, edit_token } = (await c.json()) as { slug: string; edit_token: string };
-    const big = "a".repeat(200 * 1024);
+    const big = "a".repeat(600 * 1024);
     const r = await SELF.fetch(`https://x/api/v1/pages/${slug}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
@@ -381,8 +381,8 @@ describe("browser routes", () => {
   });
 
   it("preview endpoint rejects oversize via Content-Length", async () => {
-    // PREVIEW_MAX_BYTES is 64 KB; send 80 KB.
-    const big = "a".repeat(80 * 1024);
+    // PREVIEW_MAX_BYTES is 256 KB; send 300 KB.
+    const big = "a".repeat(300 * 1024);
     const r = await SELF.fetch("https://x/api/preview", {
       method: "POST",
       headers: { "Content-Type": "text/markdown" },

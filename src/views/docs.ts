@@ -30,7 +30,7 @@ Create a page.
 \`\`\`json
 {
   "title": "string",
-  "content": "string (markdown, max 128 KB UTF-8 bytes)",
+  "content": "string (markdown, max 512 KB UTF-8 bytes)",
   "password": "optional — protect the page from the first publish"
 }
 \`\`\`
@@ -159,7 +159,7 @@ curl -X DELETE "https://YOUR-DEPLOYMENT/api/v1/pages/abc12345?edit_token=<token>
 - There are no rate limits beyond Cloudflare's defaults. Be reasonable.
 - CORS is open: \`Access-Control-Allow-Origin: *\` on \`/api/v1/*\`.
 - Markdown is sanitized at render time. Raw HTML in your input is stripped — \`html: false\` in markdown-it.
-- Max content size is **128 KB UTF-8 bytes** (an emoji is 4 bytes, not 1). Larger payloads get \`413\`, rejected by \`Content-Length\` before parsing.
+- Max content size is **512 KB UTF-8 bytes** (an emoji is 4 bytes, not 1). Larger payloads get \`413\`, rejected by \`Content-Length\` before parsing.
 `;
 
 export function docsPage(origin: string, showPagesLink = false): string {

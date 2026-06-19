@@ -41,6 +41,6 @@ export type PageSummary = {
   protected: number;
 };
 
-export const MAX_CONTENT_BYTES = 128 * 1024;
+export const MAX_CONTENT_BYTES = 512 * 1024;
 export const MAX_TITLE_LENGTH = 200;
 export const MAX_PASSWORD_LENGTH = 128;
