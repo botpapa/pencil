@@ -41,7 +41,7 @@ export function isValidSlug(s: string): boolean {
 // 9-character slug that would 404 on every read endpoint.
 export async function createPageWithUniqueSlug(
   db: D1Database,
-  page: { title: string; content: string; owner_id: string },
+  page: { title: string; content: string; owner_id: string; password_hash?: string | null },
 ): Promise<{ slug: string; created_at: number }> {
   let lastErr: unknown;
   for (let i = 0; i < MAX_INSERT_ATTEMPTS; i++) {

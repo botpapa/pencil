@@ -15,20 +15,46 @@ const CACHE_HEADERS = {
   "Cache-Control": "public, max-age=604800, immutable",
 };
 
-function escapeHtml(s: string): string {
+function safeFromCodePoint(cp: number): string {
+  if (!Number.isFinite(cp) || cp < 0 || cp > 0x10ffff) return "";
+  try {
+    return String.fromCodePoint(cp);
+  } catch {
+    return "";
+  }
+}
+
+// workers-og parses this HTML with Cloudflare's HTMLRewriter, which does NOT
+// decode HTML entities in text nodes. So anything we entity-escape (`&` ->
+// `&amp;`, `<` -> `&lt;`, `'` -> `&#39;`) would render *literally* in the
+// image. Instead we feed satori plain text: decode any entities back to real
+// characters, then strip tag-like sequences and bare angle brackets — both so
+// it reads cleanly and so a crafted title can't inject nodes into satori's
+// tree (the safety the old escape gave us, kept without the visual artifacts).
+function ogText(s: string): string {
   return s
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, h: string) => safeFromCodePoint(parseInt(h, 16)))
+    .replace(/&#(\d+);/g, (_, d: string) => safeFromCodePoint(parseInt(d, 10)))
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&(?:apos|#39);/g, "'")
+    .replace(/&nbsp;/g, " ")
+    // decode &amp; LAST so "&amp;lt;" resolves to the literal "&lt;", not "<"
+    .replace(/&amp;/g, "&")
+    // strip real tag-like sequences (`<div>`, `</p>`, `<!--`), then drop any
+    // remaining bare angle brackets so none can reach (and confuse) HTMLRewriter
+    .replace(/<\/?[a-zA-Z!?][^>]*>/g, "")
+    .replace(/[<>]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function buildHtml(title: string, excerpt: string): string {
   // workers-og runs satori; supports inline styles only, flexbox layouts.
   // Note: every flex parent that has multiple children needs display:flex.
-  const safeTitle = escapeHtml(title || "untitled");
-  const safeExcerpt = escapeHtml(excerpt);
+  const safeTitle = ogText(title) || "untitled";
+  const safeExcerpt = ogText(excerpt);
   return `
 <div style="display: flex; flex-direction: column; width: 100%; height: 100%; padding: 80px; background: #FAF7F2; font-family: 'Newsreader', Georgia, serif; color: #1A1714; justify-content: space-between;">
   <div style="display: flex; flex-direction: column;">
@@ -69,7 +95,11 @@ app.get("/og/:filename", async (c) => {
   const page = await getPage(c.env.DB, slug);
   if (!page) return c.text("not found", 404);
 
-  const html = buildHtml(page.title, plaintextExcerpt(page.content, 140));
+  // Password-protected pages must not leak their title or content into the
+  // shareable card — render a generic locked placeholder instead.
+  const html = page.password_hash != null
+    ? buildHtml("Password protected", "Enter the password on pencil.md to view this page.")
+    : buildHtml(page.title, plaintextExcerpt(page.content, 140));
   const img = new ImageResponse(html, { width: 1200, height: 630 });
   const buf = await img.arrayBuffer();
 

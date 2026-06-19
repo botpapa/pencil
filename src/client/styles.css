@@ -490,6 +490,10 @@ a:focus-visible, button:focus-visible, textarea:focus-visible, input:focus-visib
 .page-editor .main {
   display: flex;
   flex-direction: column;
+  /* A flex item's default min-height is `auto`, which refuses to shrink below
+   * content height — that would let .main overflow the viewport-bounded .app
+   * and break internal pane scrolling. min-height:0 lets the chain resolve. */
+  min-height: 0;
 }
 
 .editor-shell {
@@ -498,6 +502,23 @@ a:focus-visible, button:focus-visible, textarea:focus-visible, input:focus-visib
   display: flex;
   flex-direction: column;
   max-width: 100%;
+}
+
+/* Desktop: pin the editor page to the viewport so the flex chain is bounded
+ * and the two panes scroll *internally* (textarea + preview each own their
+ * scroll). `.app` needs a *definite* height (not just min-height) or the flex
+ * children grow to content height and overflow gets clipped — nothing scrolls.
+ * With a definite height the chain resolves and the textarea / preview pane
+ * become the scroll containers, which is also what the per-pane scroll-sync
+ * listeners require. The mobile media query below resets all of this so the
+ * editor flows in the page and the window scrolls instead. */
+body.page-editor {
+  height: 100vh;
+  overflow: hidden;
+}
+body.page-editor .app {
+  height: 100%;
+  min-height: 0;
 }
 
 /* Floating action group: pinned to the viewport top-right, sitting directly
@@ -556,6 +577,11 @@ a:focus-visible, button:focus-visible, textarea:focus-visible, input:focus-visib
   display: grid;
   /* desktop default: editor full-width, preview collapsed */
   grid-template-columns: 1fr 0;
+  /* Single row that fills the (bounded) grid height; minmax(0,...) lets the
+   * panes shrink below content so they establish their own scroll instead of
+   * stretching the row to content height. Reset to `auto` on mobile, where the
+   * editor flows in the page. */
+  grid-template-rows: minmax(0, 1fr);
   min-height: 0;
   transition: grid-template-columns 180ms ease;
 }
@@ -652,7 +678,7 @@ a:focus-visible, button:focus-visible, textarea:focus-visible, input:focus-visib
   }
   /* mobile: tabs swap panes; ignore preview-toggle desktop state */
   .split,
-  .split[data-preview-open="true"] { grid-template-columns: 1fr; }
+  .split[data-preview-open="true"] { grid-template-columns: 1fr; grid-template-rows: auto; }
   .split > .pane.editor-pane { border-right: none; }
   .split > .pane.preview-pane { overflow: visible; border-left: none; max-height: none; }
   .split > .pane[hidden] { display: none; }
@@ -663,6 +689,8 @@ a:focus-visible, button:focus-visible, textarea:focus-visible, input:focus-visib
    * grows with content. The browser-window itself is the scroll container,
    * so the title scrolls up out of view and the footer naturally lands at
    * the bottom of the document. */
+  body.page-editor { height: auto; overflow: visible; }
+  body.page-editor .app { height: auto; min-height: 100vh; }
   .editor-shell { flex: none; height: auto; min-height: auto; }
   .split > .pane.editor-pane { overflow: visible; }
   .editor-pane textarea {
@@ -740,4 +768,189 @@ a:focus-visible, button:focus-visible, textarea:focus-visible, input:focus-visib
   text-transform: uppercase;
   letter-spacing: 0.1em;
   margin-top: 0.5rem;
+}
+
+/* ---------- settings (on the stats page) ----------
+ * Tidy left-aligned list: label on the left, small state + action on the
+ * right, hairline dividers between. Rows that need a field (password / delete)
+ * are native <details> that reveal a panel below — no JS. */
+.settings {
+  max-width: var(--measure);
+  margin: 3rem auto 0;
+  text-align: left;
+}
+.setting {
+  border-bottom: var(--rule-w) solid var(--rule);
+}
+.setting:last-child { border-bottom: none; }
+.row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem 0;
+  margin: 0;
+}
+summary.row { cursor: pointer; list-style: none; }
+summary.row::-webkit-details-marker { display: none; }
+.setting .k {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--ink);
+}
+.setting .v {
+  display: flex;
+  align-items: baseline;
+  gap: 0.85rem;
+  white-space: nowrap;
+}
+.state {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--ink-soft);
+}
+.state.on { color: var(--ink); }
+/* Small inline text action ("enable" / "change" / "delete"). */
+.setting-action {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--ink);
+  text-decoration: underline;
+  text-decoration-color: var(--accent);
+  text-underline-offset: 3px;
+}
+.setting-action:hover { color: var(--accent-ink); background: var(--accent); }
+.setting-action.danger-link { color: var(--danger); text-decoration-color: var(--danger); }
+.setting-action.danger-link:hover { background: var(--danger); color: var(--bg); }
+/* Revealed panel under a row. */
+.row-reveal { padding: 0.25rem 0 1.25rem; }
+.row-note {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-soft);
+  margin: 0 0 0.85rem;
+  line-height: 1.4;
+}
+.pw-form { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+.row-remove { margin-top: 0.8rem; }
+.pw-input {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  padding: 0.4rem 0.7rem;
+  background: var(--bg);
+  color: var(--ink);
+  border: var(--rule-w) solid var(--rule);
+  border-radius: 6px;
+  min-width: 0;
+}
+.pw-input:focus { outline: 2px solid var(--accent); }
+.btn--danger {
+  border-color: var(--danger);
+  color: var(--danger);
+  background: var(--bg);
+}
+.btn--danger:hover { background: var(--danger); color: var(--bg); border-color: var(--danger); }
+
+/* ---------- pages list ---------- */
+.pages {
+  max-width: var(--measure);
+  margin: 4rem auto;
+  padding: 0 var(--pad);
+}
+.pages-heading {
+  font-family: var(--font-serif);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  margin: 0 0 0.3rem;
+}
+.pages .label {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--ink-soft);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.pages-list { list-style: none; margin: 2rem 0 0; padding: 0; }
+.page-row {
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+  padding: 0.9rem 0;
+  border-bottom: var(--rule-w) solid var(--rule);
+}
+.page-title {
+  font-family: var(--font-serif);
+  font-size: 1.15rem;
+  color: var(--ink);
+  text-decoration: none;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.page-title:hover { text-decoration: underline; text-decoration-color: var(--accent); }
+.page-meta {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-soft);
+  white-space: nowrap;
+}
+.page-edit {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-soft);
+  text-decoration: none;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.page-edit:hover { color: var(--ink); }
+
+/* ---------- password unlock screen ---------- */
+.unlock {
+  max-width: 28rem;
+  margin: 7rem auto;
+  padding: 0 var(--pad);
+  text-align: center;
+  font-family: var(--font-serif);
+}
+.unlock .lock-icon { font-size: 3rem; margin: 0; line-height: 1; }
+.unlock-heading {
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  margin: 1rem 0 0.3rem;
+}
+.unlock .label {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--ink-soft);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.unlock-form {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: center;
+  flex-wrap: wrap;
+  margin-top: 2rem;
+}
+.unlock-input {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  padding: 0.55rem 0.8rem;
+  background: var(--bg);
+  color: var(--ink);
+  border: var(--rule-w) solid var(--rule);
+  border-radius: 6px;
+}
+.unlock-input:focus { outline: 2px solid var(--accent); }
+.unlock-error {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--danger);
+  margin-top: 1rem;
 }

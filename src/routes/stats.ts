@@ -2,7 +2,7 @@
 
 import { Hono } from "hono";
 import { ensureOwnerCookie } from "../lib/auth.js";
-import { getPage } from "../lib/db.js";
+import { getPage, ownerHasPages } from "../lib/db.js";
 import { isValidSlug } from "../lib/slug.js";
 import { statsPage, notFoundPage } from "../views/stats.js";
 import type { AppEnv } from "../types.js";
@@ -19,7 +19,15 @@ app.get("/:slug/stats", async (c) => {
     return c.html(notFoundPage(), 404);
   }
   return c.html(
-    statsPage(slug, page.title, page.views, page.created_at, page.indexable === 1),
+    statsPage({
+      slug,
+      title: page.title,
+      views: page.views,
+      createdAt: page.created_at,
+      indexable: page.indexable === 1,
+      protected: page.password_hash != null,
+      showPagesLink: await ownerHasPages(c.env.DB, c.get("ownerId")),
+    }),
   );
 });
 

@@ -9,9 +9,27 @@
 // View-counter and OG cache invalidation live here too.
 
 import { Hono } from "hono";
+import { getCookie, setCookie } from "hono/cookie";
 import { ensureOwnerCookie } from "../lib/auth.js";
 import { isBotUA } from "../lib/security.js";
-import { getPage, updatePage, incrementViews, setIndexable } from "../lib/db.js";
+import {
+  getPage,
+  updatePage,
+  incrementViews,
+  setIndexable,
+  setPasswordHash,
+  deletePage,
+  listPagesByOwner,
+  ownerHasPages,
+} from "../lib/db.js";
+import {
+  hashPassword,
+  verifyPassword,
+  signPageAccess,
+  verifyPageAccess,
+  pageAccessCookieName,
+  PAGE_ACCESS_MAX_AGE,
+} from "../lib/password.js";
 import { isValidSlug, createPageWithUniqueSlug } from "../lib/slug.js";
 import { renderMarkdown, plaintextExcerpt } from "../lib/markdown.js";
 import { rejectIfOversize, PREVIEW_MAX_BYTES } from "../lib/limits.js";
@@ -25,9 +43,33 @@ import {
 import { homePage } from "../views/home.js";
 import { editorPage } from "../views/editor.js";
 import { readerPage } from "../views/reader.js";
+import { pagesListPage } from "../views/pages.js";
+import { unlockPage } from "../views/unlock.js";
 import { notFoundPage } from "../views/stats.js";
-import { MAX_CONTENT_BYTES } from "../types.js";
+import { MAX_CONTENT_BYTES, MAX_PASSWORD_LENGTH } from "../types.js";
 import type { AppEnv } from "../types.js";
+
+// OG image always reflects the page's current content/lock state; bust the
+// cached PNG whenever either changes.
+function bustOg(c: { env: AppEnv["Bindings"]; executionCtx: { waitUntil(p: Promise<unknown>): void } }, slug: string): void {
+  c.executionCtx.waitUntil(
+    c.env.OG_CACHE.delete(`og/${slug}.png`).catch((err) => {
+      console.warn("og cache delete failed", { slug, err: String(err) });
+    }),
+  );
+}
+
+// Has the current owner unlocked this protected page (or is the owner)?
+async function canViewProtected(
+  c: import("hono").Context<AppEnv>,
+  page: { slug: string; owner_id: string; password_hash: string | null },
+  ownerId: string,
+): Promise<boolean> {
+  if (page.password_hash == null) return true;
+  if (page.owner_id === ownerId) return true; // owner always sees their page
+  const token = getCookie(c, pageAccessCookieName(page.slug));
+  return verifyPageAccess(token, page.slug, page.password_hash, c.env.COOKIE_SECRET);
+}
 
 const app = new Hono<AppEnv>();
 
@@ -56,7 +98,16 @@ function validateBody(
 // Home: empty editor.
 app.get("/", async (c) => {
   await ensureOwnerCookie(c);
-  return c.html(homePage());
+  const hasPages = await ownerHasPages(c.env.DB, c.get("ownerId"));
+  return c.html(homePage(hasPages));
+});
+
+// The owner's pages (this browser's cookie). Must be registered before the
+// "/:slug" reader so it isn't swallowed by it.
+app.get("/pages", async (c) => {
+  await ensureOwnerCookie(c);
+  const pages = await listPagesByOwner(c.env.DB, c.get("ownerId"));
+  return c.html(pagesListPage(pages));
 });
 
 // Create.
@@ -120,6 +171,13 @@ app.get("/:slug", async (c) => {
   await ensureOwnerCookie(c);
   const ownerId = c.get("ownerId");
   const isOwner = page.owner_id === ownerId;
+  const isProtected = page.password_hash != null;
+
+  // Password gate (full lockdown): non-owners without a valid unlock cookie get
+  // the password screen and nothing else — no content, no view bump, no excerpt.
+  if (isProtected && !(await canViewProtected(c, page, ownerId))) {
+    return c.html(unlockPage(slug), 401);
+  }
 
   // View counter — skip self, skip bots. Run in waitUntil. Log failures so
   // observability picks up DB issues instead of swallowing them silently.
@@ -133,7 +191,11 @@ app.get("/:slug", async (c) => {
   }
 
   const htmlContent = renderMarkdown(page.content);
-  const description = plaintextExcerpt(page.content, 160) || `pencil.md page ${slug}`;
+  // Protected pages never leak an excerpt to meta tags and are never indexed,
+  // regardless of the page's own indexable flag.
+  const description = isProtected
+    ? "This page is password protected."
+    : plaintextExcerpt(page.content, 160) || `pencil.md page ${slug}`;
   const canonicalUrl = `${originUrl(c)}/${slug}`;
   const ogImage = `${originUrl(c)}/og/${slug}.png`;
 
@@ -147,7 +209,8 @@ app.get("/:slug", async (c) => {
       canonicalUrl,
       createdAt: page.created_at,
       isOwner,
-      indexable: page.indexable === 1,
+      indexable: !isProtected && page.indexable === 1,
+      showPagesLink: await ownerHasPages(c.env.DB, ownerId),
     }),
   );
 });
@@ -180,6 +243,79 @@ app.post("/:slug/settings/indexable", async (c) => {
   return c.redirect(`/${slug}/stats`, 303);
 });
 
+// Submit a password to unlock a protected page. Open to anyone (it's the gate).
+app.post("/:slug/unlock", async (c) => {
+  const slug = c.req.param("slug");
+  if (!isValidSlug(slug)) return c.html(notFoundPage(), 404);
+  const page = await getPage(c.env.DB, slug);
+  if (!page) return c.html(notFoundPage(), 404);
+  // Nothing to unlock — just send them to the page.
+  if (page.password_hash == null) return c.redirect(`/${slug}`, 303);
+
+  const form = await c.req.formData();
+  const password = String(form.get("password") ?? "");
+  // Cap before hashing so an attacker can't force PBKDF2 over a huge input.
+  const ok =
+    password.length > 0 &&
+    password.length <= MAX_PASSWORD_LENGTH &&
+    (await verifyPassword(password, page.password_hash));
+  if (!ok) {
+    return c.html(unlockPage(slug, { error: true }), 401);
+  }
+
+  const token = await signPageAccess(slug, page.password_hash, c.env.COOKIE_SECRET);
+  setCookie(c, pageAccessCookieName(slug), token, {
+    httpOnly: true,
+    secure: true,
+    sameSite: "Lax",
+    path: "/",
+    maxAge: PAGE_ACCESS_MAX_AGE,
+  });
+  return c.redirect(`/${slug}`, 303);
+});
+
+// Set / change / remove a page's password (cookie-owner only).
+app.post("/:slug/settings/password", async (c) => {
+  const slug = c.req.param("slug");
+  if (!isValidSlug(slug)) return c.html(notFoundPage(), 404);
+  const page = await getPage(c.env.DB, slug);
+  if (!page) return c.html(notFoundPage(), 404);
+
+  await ensureOwnerCookie(c);
+  if (page.owner_id !== c.get("ownerId")) return c.text("forbidden", 403);
+
+  const form = await c.req.formData();
+  if (form.get("remove") != null) {
+    await setPasswordHash(c.env.DB, slug, null);
+  } else {
+    const password = String(form.get("password") ?? "");
+    if (!password) return c.redirect(`/${slug}/stats`, 303); // no-op on empty
+    if (password.length > MAX_PASSWORD_LENGTH) {
+      return c.text(`password exceeds ${MAX_PASSWORD_LENGTH} chars`, 400);
+    }
+    await setPasswordHash(c.env.DB, slug, await hashPassword(password));
+  }
+
+  // Protection state changed → the OG card (locked vs content) is now stale.
+  bustOg(c, slug);
+  return c.redirect(`/${slug}/stats`, 303);
+});
+
+// Permanently delete a page (cookie-owner only).
+app.post("/:slug/delete", async (c) => {
+  const slug = c.req.param("slug");
+  if (!isValidSlug(slug)) return c.html(notFoundPage(), 404);
+  const page = await getPage(c.env.DB, slug);
+  if (!page) return c.html(notFoundPage(), 404);
+
+  await ensureOwnerCookie(c);
+  if (page.owner_id !== c.get("ownerId")) return c.text("forbidden", 403);
+
+  await deletePage(c.env.DB, slug);
+  bustOg(c, slug);
+  return c.redirect(`/pages`, 303);
+});
+
 // Editor (cookie-owner only).
 app.get("/:slug/edit", async (c) => {
   const slug = c.req.param("slug");
@@ -196,6 +332,7 @@ app.get("/:slug/edit", async (c) => {
       slug,
       title: page.title,
       content: page.content,
+      showPagesLink: await ownerHasPages(c.env.DB, c.get("ownerId")),
     }),
   );
 });

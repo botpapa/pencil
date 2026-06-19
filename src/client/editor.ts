@@ -57,6 +57,9 @@ const DRAFT_KEY = mode === "edit" && slug ? `pencil:draft:${slug}` : "pencil:dra
 const MOBILE_BREAKPOINT = 720;
 
 let lastPreviewRequestId = 0;
+// The textarea value the preview pane currently reflects. Lets the mobile tab
+// switch skip a redundant re-render (and its flash) when nothing has changed.
+let lastRenderedValue: string | null = null;
 let inFlightPreview: AbortController | null = null;
 let lastSavedTitle = titleInput.value;
 let lastSavedContent = mdInput.value;
@@ -175,6 +178,7 @@ async function runPreview(): Promise<void> {
   const body = mdInput!.value;
   if (!body.trim()) {
     previewOut!.innerHTML = `<p class="placeholder"><em>preview appears here.</em></p>`;
+    lastRenderedValue = body;
     return;
   }
   // Cancel any in-flight preview fetch so we stop wasting bandwidth on stale
@@ -197,7 +201,9 @@ async function runPreview(): Promise<void> {
     }
     const html = await res.text();
     previewOut!.innerHTML = html;
+    lastRenderedValue = body;
     expandTallCells(previewOut!);
+    rebuildSyncPoints();
   } catch (err) {
     if (id !== lastPreviewRequestId) return;
     // Aborts are expected (we cancelled ourselves); don't show an error UI.
@@ -287,6 +293,61 @@ function onChange(): void {
 mdInput.addEventListener("input", onChange);
 titleInput.addEventListener("input", onChange);
 
+// Mirror the server-side title cap (src/types.ts MAX_TITLE_LENGTH). The input's
+// `maxlength` only constrains typed input — programmatic value assignment below
+// can exceed it, and the server would then reject the save — so we clamp here.
+const MAX_TITLE_LENGTH = 200;
+
+// Pasting multi-line text into the (single-line) title keeps only the first
+// line as the title; everything after the first line break is pushed into the
+// body. Without this the browser silently flattens the pasted newlines and the
+// whole blob lands on one title line.
+titleInput.addEventListener("paste", (e) => {
+  const pasted = e.clipboardData?.getData("text/plain");
+  if (pasted == null) return; // no plain-text payload — let the default run
+  const normalized = pasted.replace(/\r\n?/g, "\n");
+  const nl = normalized.indexOf("\n");
+  if (nl === -1) return; // single line — nothing special to do
+
+  e.preventDefault();
+  const firstLine = normalized.slice(0, nl);
+  const remainder = normalized.slice(nl + 1); // everything past the first break
+
+  // Splice the first line into the title at the caret, preserving any title
+  // text that sat before/after the selection.
+  const t = titleInput!;
+  const selStart = t.selectionStart ?? t.value.length;
+  const selEnd = t.selectionEnd ?? t.value.length;
+  const before = t.value.slice(0, selStart);
+  const after = t.value.slice(selEnd);
+  let line = before + firstLine + after;
+
+  // Clamp to the cap; spill any overflow into the body rather than dropping it.
+  let overflow = "";
+  if (line.length > MAX_TITLE_LENGTH) {
+    overflow = line.slice(MAX_TITLE_LENGTH);
+    line = line.slice(0, MAX_TITLE_LENGTH);
+  }
+  t.value = line;
+  const caret = Math.min(before.length + firstLine.length, MAX_TITLE_LENGTH);
+  t.setSelectionRange(caret, caret);
+
+  // Text destined for the body: title overflow (if any) then the remainder.
+  const moved = overflow ? overflow + "\n" + remainder : remainder;
+  if (moved) {
+    // Prepend to the body, then focus it with the caret right after the moved
+    // text so the user continues where the paste ended.
+    const b = mdInput!;
+    const existing = b.value;
+    const joiner = existing && !moved.endsWith("\n") ? "\n" : "";
+    b.value = moved + joiner + existing;
+    b.focus();
+    b.setSelectionRange(moved.length, moved.length);
+  }
+
+  onChange();
+});
+
 mdInput.addEventListener("keydown", (e) => {
   if (e.key !== "Tab") return;
   e.preventDefault();
@@ -337,107 +398,280 @@ window.addEventListener("keydown", (e) => {
   }
 });
 
-// ---------- mobile tab scroll sync ----------
+// ---------- scroll sync core ----------
 //
-// When swapping the visible pane on mobile we want the new pane to land on
-// roughly the same content the user was reading. We anchor by markdown
-// source line: the renderer tags every top-level block in the preview with
-// data-source-line, and we convert textarea scroll <-> source line via the
-// computed line-height. "Off by one paragraph" near the pane top is fine.
+// The textarea and preview stay aligned by markdown *source line*. The
+// renderer tags each preview block with data-source-line; we pair every such
+// block with the pixel offset of that source line inside the textarea, giving
+// a list of sync points {editorY, previewY}. Mapping a scroll position through
+// these points (piecewise-linear) keeps a tall rendered block aligned with its
+// short source even though the two sides advance at different rates — the
+// "preview scrolls slower" behaviour.
+//
+// The textarea soft-wraps, so a source line's offset is NOT line*lineHeight.
+// We measure it with an offscreen mirror that reproduces the textarea's
+// wrapping. Measured once per render / resize, never during a scroll.
 
-function getTextareaTopLine(): number {
-  if (!mdInput) return 0;
-  const lh = parseFloat(getComputedStyle(mdInput).lineHeight) || 24;
-  // Desktop: textarea has its own scrollbar, so scrollTop is meaningful.
-  // Mobile: the textarea grows to fit its content (field-sizing or our JS
-  // autosize fallback) and the document scrolls; derive the top line from
-  // the textarea's position in the viewport instead.
-  const desktopScroll = mdInput.scrollTop;
-  if (desktopScroll > 0) return Math.floor(desktopScroll / lh);
-  const rect = mdInput.getBoundingClientRect();
-  if (rect.top >= 0) return 0;
-  return Math.floor(-rect.top / lh);
+type SyncPoint = { editorY: number; previewY: number };
+let syncPoints: SyncPoint[] = [];
+// Textarea top padding (px): textarea scrollTop 0 shows the text below this
+// padding, so content-offset 0 corresponds to scrollTop === editorPadTopPx.
+let editorPadTopPx = 0;
+
+let mirrorEl: HTMLDivElement | null = null;
+function getMirror(): HTMLDivElement {
+  if (mirrorEl) return mirrorEl;
+  const m = document.createElement("div");
+  m.setAttribute("aria-hidden", "true");
+  m.style.position = "absolute";
+  m.style.top = "0";
+  m.style.left = "-9999px";
+  m.style.visibility = "hidden";
+  m.style.pointerEvents = "none";
+  m.style.whiteSpace = "pre-wrap";
+  m.style.boxSizing = "border-box";
+  document.body.appendChild(m);
+  mirrorEl = m;
+  return m;
 }
 
-function scrollTextareaToLine(line: number): void {
-  if (!mdInput || line <= 0) return;
-  const lh = parseFloat(getComputedStyle(mdInput).lineHeight) || 24;
-  const target = line * lh;
-  if (!isMobile()) {
-    mdInput.scrollTop = target;
-  } else {
-    const rect = mdInput.getBoundingClientRect();
-    const taTopOnPage = window.scrollY + rect.top;
-    window.scrollTo({ top: taTopOnPage + target, behavior: "auto" });
+function escapeForMirror(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+// Measure the content-space pixel offset (line 0 → 0) of each requested source
+// line inside the textarea, reproducing its wrapping in the mirror.
+function measureEditorOffsets(lines: number[]): Map<number, number> {
+  const ta = mdInput!;
+  const cs = getComputedStyle(ta);
+  editorPadTopPx = parseFloat(cs.paddingTop) || 0;
+  const m = getMirror();
+  // Match every property that affects line wrapping / height.
+  m.style.width = ta.clientWidth + "px";
+  m.style.paddingTop = cs.paddingTop;
+  m.style.paddingRight = cs.paddingRight;
+  m.style.paddingBottom = cs.paddingBottom;
+  m.style.paddingLeft = cs.paddingLeft;
+  m.style.fontFamily = cs.fontFamily;
+  m.style.fontSize = cs.fontSize;
+  m.style.fontWeight = cs.fontWeight;
+  m.style.fontStyle = cs.fontStyle;
+  m.style.lineHeight = cs.lineHeight;
+  m.style.letterSpacing = cs.letterSpacing;
+  m.style.tabSize = cs.tabSize;
+  m.style.overflowWrap = cs.overflowWrap || "break-word";
+  m.style.wordBreak = cs.wordBreak;
+
+  const srcLines = ta.value.split("\n");
+  const need = new Set(lines);
+  let htmlStr = "";
+  for (let i = 0; i < srcLines.length; i++) {
+    if (need.has(i)) htmlStr += `<span data-ml="${i}"></span>`;
+    htmlStr += escapeForMirror(srcLines[i] ?? "");
+    if (i < srcLines.length - 1) htmlStr += "\n";
   }
+  // Zero-width trailing char so a marker on the last line still measures.
+  m.innerHTML = htmlStr + "​";
+
+  const out = new Map<number, number>();
+  const mTop = m.getBoundingClientRect().top;
+  for (const span of Array.from(m.querySelectorAll<HTMLElement>("[data-ml]"))) {
+    const i = Number(span.dataset.ml);
+    out.set(i, Math.max(0, span.getBoundingClientRect().top - mTop - editorPadTopPx));
+  }
+  return out;
 }
 
-function getPreviewTopLine(): number {
-  if (!previewOut) return 0;
-  const els = previewOut.querySelectorAll<HTMLElement>("[data-source-line]");
-  for (const el of els) {
-    const r = el.getBoundingClientRect();
-    if (r.bottom > 0) {
-      const v = Number(el.dataset.sourceLine);
-      return Number.isFinite(v) ? v : 0;
+// Rebuild the sync-point table from the current preview render. Cheap layout
+// work done up front so scroll handlers only do arithmetic. Desktop only:
+// on mobile the panes are swapped (one is display:none at any moment), so the
+// editor and preview can't be measured together — selectTab maps per swap in
+// source-line space instead.
+function rebuildSyncPoints(): void {
+  syncPoints = [];
+  if (isMobile()) return;
+  if (!previewOut || !panePreview || !mdInput) return;
+  const containerTop = panePreview.getBoundingClientRect().top;
+  const base = panePreview.scrollTop;
+  const anchors: { line: number; previewY: number }[] = [];
+  for (const el of Array.from(previewOut.querySelectorAll<HTMLElement>("[data-source-line]"))) {
+    const line = Number(el.dataset.sourceLine);
+    if (!Number.isFinite(line)) continue;
+    anchors.push({ line, previewY: base + (el.getBoundingClientRect().top - containerTop) });
+  }
+  if (anchors.length === 0) return;
+  const offsets = measureEditorOffsets(anchors.map((a) => a.line));
+  const pts: SyncPoint[] = [];
+  for (const a of anchors) {
+    const editorY = offsets.get(a.line);
+    if (editorY !== undefined) pts.push({ editorY, previewY: a.previewY });
+  }
+  // Keep points strictly increasing on both axes so interpolation is stable.
+  pts.sort((p, q) => p.editorY - q.editorY);
+  const mono: SyncPoint[] = [];
+  for (const p of pts) {
+    const last = mono[mono.length - 1];
+    if (!last || (p.editorY > last.editorY && p.previewY > last.previewY)) mono.push(p);
+  }
+  syncPoints = mono;
+}
+
+// Piecewise-linear map of `v` from one axis to the other, extrapolating with
+// the last segment's slope past the final point so pane ends meet.
+function mapThrough(from: "editorY" | "previewY", to: "editorY" | "previewY", v: number): number {
+  const p = syncPoints;
+  if (p.length === 0) return 0;
+  if (p.length === 1) return p[0]![to];
+  if (v <= p[0]![from]) return p[0]![to];
+  for (let i = 1; i < p.length; i++) {
+    if (v <= p[i]![from]) {
+      const lo = p[i - 1]!, hi = p[i]!;
+      const span = hi[from] - lo[from];
+      const frac = span > 0 ? (v - lo[from]) / span : 0;
+      return lo[to] + frac * (hi[to] - lo[to]);
     }
   }
-  return 0;
+  const a = p[p.length - 2]!, b = p[p.length - 1]!;
+  const span = b[from] - a[from];
+  const slope = span > 0 ? (b[to] - a[to]) / span : 0;
+  return b[to] + (v - b[from]) * slope;
 }
 
-function scrollPreviewToLine(line: number): void {
-  if (!previewOut || !panePreview) return;
-  const els = Array.from(
-    previewOut.querySelectorAll<HTMLElement>("[data-source-line]"),
-  );
-  if (els.length === 0) return;
-  // Walk in DOM order; keep the last block whose source-line is <= the
-  // anchor. Markdown-it emits tokens in source order so this is stable.
-  let target = els[0]!;
-  for (const el of els) {
-    const v = Number(el.dataset.sourceLine);
-    if (Number.isFinite(v) && v <= line) target = el;
-    else break;
-  }
+// Current editor content-offset visible at the top of the viewport, for both
+// layouts: desktop the textarea scrolls (scrollTop), mobile the window scrolls
+// (derive from the textarea's position relative to the viewport).
+function readEditorOffset(): number {
+  if (!isMobile()) return Math.max(0, mdInput!.scrollTop - editorPadTopPx);
+  return Math.max(0, -mdInput!.getBoundingClientRect().top - editorPadTopPx);
+}
+function writeEditorOffset(editorY: number): void {
   if (!isMobile()) {
-    const containerTop = panePreview.getBoundingClientRect().top;
-    const targetTop = target.getBoundingClientRect().top;
-    panePreview.scrollTop += targetTop - containerTop;
+    mdInput!.scrollTop = editorY + editorPadTopPx;
   } else {
-    target.scrollIntoView({ block: "start", behavior: "auto" });
+    const top = window.scrollY + mdInput!.getBoundingClientRect().top + editorPadTopPx + editorY;
+    window.scrollTo({ top, behavior: "auto" });
   }
+}
+// Same for the preview pane. previewY is measured from the pane's border-box
+// top, so it maps directly to scrollTop (desktop) or a window offset (mobile).
+function readPreviewY(): number {
+  if (!isMobile()) return panePreview!.scrollTop;
+  return Math.max(0, -panePreview!.getBoundingClientRect().top);
+}
+function writePreviewY(previewY: number): void {
+  if (!isMobile()) {
+    panePreview!.scrollTop = previewY;
+  } else {
+    const top = window.scrollY + panePreview!.getBoundingClientRect().top + previewY;
+    window.scrollTo({ top, behavior: "auto" });
+  }
+}
+
+// ---------- mobile tab sync (source-line space) ----------
+//
+// Mobile shows one pane at a time, so we can't hold a combined sync table.
+// Instead the markdown *source line* is the shared currency: read the line at
+// the top of the visible pane, swap, then scroll the now-visible pane to that
+// same line. Each pane's geometry is only ever read while it's visible (the
+// editor mirror in particular needs a laid-out textarea).
+
+type LinePoint = { line: number; y: number };
+
+// Piecewise-linear interpolation over points, mapping `from` -> `to`. Sorts by
+// `from` and extrapolates past the ends with the last segment's slope.
+function interpLineY(pts: LinePoint[], from: "line" | "y", to: "line" | "y", v: number): number {
+  if (pts.length === 0) return 0;
+  const a = [...pts].sort((p, q) => p[from] - q[from]);
+  if (a.length === 1) return a[0]![to];
+  if (v <= a[0]![from]) return a[0]![to];
+  for (let i = 1; i < a.length; i++) {
+    if (v <= a[i]![from]) {
+      const lo = a[i - 1]!, hi = a[i]!;
+      const span = hi[from] - lo[from];
+      const f = span > 0 ? (v - lo[from]) / span : 0;
+      return lo[to] + f * (hi[to] - lo[to]);
+    }
+  }
+  const lo = a[a.length - 2]!, hi = a[a.length - 1]!;
+  const span = hi[from] - lo[from];
+  const slope = span > 0 ? (hi[to] - lo[to]) / span : 0;
+  return hi[to] + (v - hi[from]) * slope;
+}
+
+// Source lines that have a preview block. Readable from the DOM even while the
+// preview pane is hidden (we only need the attribute, not geometry).
+function previewSourceLines(): number[] {
+  if (!previewOut) return [];
+  const out: number[] = [];
+  for (const el of Array.from(previewOut.querySelectorAll<HTMLElement>("[data-source-line]"))) {
+    const line = Number(el.dataset.sourceLine);
+    if (Number.isFinite(line)) out.push(line);
+  }
+  return out;
+}
+
+// Preview block source-line -> y offset from the pane's top. Requires the
+// preview pane to be laid out (visible).
+function previewLineYs(): LinePoint[] {
+  if (!previewOut || !panePreview) return [];
+  const top = panePreview.getBoundingClientRect().top;
+  const out: LinePoint[] = [];
+  for (const el of Array.from(previewOut.querySelectorAll<HTMLElement>("[data-source-line]"))) {
+    const line = Number(el.dataset.sourceLine);
+    if (Number.isFinite(line)) out.push({ line, y: el.getBoundingClientRect().top - top });
+  }
+  return out;
+}
+
+// Editor source-line -> content y offset, via the mirror. Requires the
+// textarea to be laid out (visible).
+function editorLineYs(lines: number[]): LinePoint[] {
+  const offs = measureEditorOffsets(lines);
+  const out: LinePoint[] = [];
+  for (const line of lines) {
+    const y = offs.get(line);
+    if (y !== undefined) out.push({ line, y });
+  }
+  return out;
 }
 
 // Mobile tabs.
 async function selectTab(which: "edit" | "preview"): Promise<void> {
-  if (!tabEdit || !tabPreview || !paneEdit || !panePreview) return;
-  const fromEdit = !paneEdit.hidden;
-  const fromPreview = !panePreview.hidden;
-  const anchor = fromEdit
-    ? getTextareaTopLine()
-    : fromPreview
-      ? getPreviewTopLine()
-      : 0;
+  if (!tabEdit || !tabPreview || !paneEdit || !panePreview || !mdInput) return;
+  const lines = previewSourceLines();
 
+  // 1. Read the source line at the top of the pane we're leaving — while it's
+  //    still visible (the hidden pane has no usable geometry).
+  let targetLine = 0;
+  if (!paneEdit.hidden) {
+    targetLine = interpLineY(editorLineYs(lines), "y", "line", readEditorOffset());
+  } else if (!panePreview.hidden) {
+    targetLine = interpLineY(previewLineYs(), "y", "line", readPreviewY());
+  }
+
+  // 2. Swap panes.
   const isEdit = which === "edit";
   tabEdit.setAttribute("aria-selected", isEdit ? "true" : "false");
   tabPreview.setAttribute("aria-selected", isEdit ? "false" : "true");
   paneEdit.hidden = !isEdit;
   panePreview.hidden = isEdit;
 
-  if (!isEdit) {
-    // Re-render so the preview reflects the latest textarea content before
-    // we try to find a source-line anchor inside it.
+  // 3. Position the now-visible pane to the same source line *synchronously*,
+  //    in this same task before the browser paints, so the content appears
+  //    already in place instead of flashing at the wrong spot then jumping.
+  //    (Reading getBoundingClientRect here forces the layout we need.)
+  if (isEdit) {
+    writeEditorOffset(interpLineY(editorLineYs(lines), "line", "y", targetLine));
+    return;
+  }
+  writePreviewY(interpLineY(previewLineYs(), "line", "y", targetLine));
+
+  // 4. Only when the preview is stale (edits since the last render) do we pay
+  //    for a re-render + re-anchor; otherwise the synchronous step above is the
+  //    whole switch — no network, no flash.
+  if (mdInput.value !== lastRenderedValue) {
     await runPreview();
-    // Double rAF: one tick for the swapped pane to lay out, another for
-    // the freshly-injected preview HTML to settle its block heights.
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => scrollPreviewToLine(anchor));
-    });
-  } else {
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => scrollTextareaToLine(anchor));
-    });
+    writePreviewY(interpLineY(previewLineYs(), "line", "y", targetLine));
   }
 }
 tabEdit?.addEventListener("click", () => void selectTab("edit"));
@@ -487,10 +721,55 @@ window.addEventListener("resize", () => {
   if (tableResizeTimer) clearTimeout(tableResizeTimer);
   tableResizeTimer = setTimeout(() => {
     if (previewOut) expandTallCells(previewOut);
+    rebuildSyncPoints(); // widths/wrapping changed → offsets are stale
   }, 150);
 });
 applyPreviewState();
 syncPaneVisibility();
+
+// ---------- desktop live scroll sync ----------
+//
+// With both panes visible side by side, scrolling whichever pane the pointer is
+// over (the "leader") drives the other (the "follower") through the shared
+// sync points above. The follower's scroll handler is short-circuited by the
+// activePane check, so setting its scrollTop never feeds back into a loop.
+
+let activePane: "edit" | "preview" = "edit";
+paneEdit?.addEventListener("pointerenter", () => {
+  activePane = "edit";
+});
+panePreview?.addEventListener("pointerenter", () => {
+  activePane = "preview";
+});
+
+// rAF-coalesce scroll events: at most one sync per frame, and only arithmetic
+// inside (sync points are precomputed, never measured during a scroll).
+let syncRaf = 0;
+function scheduleSync(run: () => void): void {
+  if (syncRaf) return;
+  syncRaf = requestAnimationFrame(() => {
+    syncRaf = 0;
+    run();
+  });
+}
+
+function canSync(): boolean {
+  return !isMobile() && previewOpen && syncPoints.length > 0;
+}
+
+mdInput.addEventListener("scroll", () => {
+  if (!canSync() || activePane !== "edit") return;
+  scheduleSync(() => {
+    panePreview!.scrollTop = mapThrough("editorY", "previewY", readEditorOffset());
+  });
+});
+
+panePreview?.addEventListener("scroll", () => {
+  if (!canSync() || activePane !== "preview") return;
+  scheduleSync(() => {
+    mdInput!.scrollTop = mapThrough("previewY", "editorY", panePreview!.scrollTop) + editorPadTopPx;
+  });
+});
 
 schedulePreview();
 autosizeMdInput();

@@ -5,6 +5,7 @@ export type EditorViewOpts = {
   slug?: string;
   title: string;
   content: string;
+  showPagesLink?: boolean;
 };
 
 export function editorPage(opts: EditorViewOpts): string {
@@ -65,5 +66,6 @@ export function editorPage(opts: EditorViewOpts): string {
     scripts: ["/client/editor.js"],
     body: raw(body),
     noIndex: true,
+    showPagesLink: opts.showPagesLink,
   });
 }

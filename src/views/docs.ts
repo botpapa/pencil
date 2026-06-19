@@ -30,7 +30,8 @@ Create a page.
 \`\`\`json
 {
   "title": "string",
-  "content": "string (markdown, max 128 KB UTF-8 bytes)"
+  "content": "string (markdown, max 128 KB UTF-8 bytes)",
+  "password": "optional — protect the page from the first publish"
 }
 \`\`\`
 
@@ -41,9 +42,14 @@ Create a page.
   "slug": "abc12345",
   "url": "https://YOUR-DEPLOYMENT/abc12345",
   "edit_url": "https://YOUR-DEPLOYMENT/abc12345/edit",
-  "edit_token": "<owner-id>.<hmac>"
+  "edit_token": "<owner-id>.<hmac>",
+  "protected": false
 }
 \`\`\`
+
+Passing a \`password\` is the **only** way to publish an already-protected page
+via the API; through the web UI, protection is enabled afterwards in the page
+settings.
 
 The response also sets a \`pencil_uid\` cookie carrying the same value. Save
 either one (or both) to authenticate later \`PUT\`s.
@@ -58,7 +64,11 @@ curl -X POST https://YOUR-DEPLOYMENT/api/v1/pages \\
 
 ## GET /pages/:slug
 
-Read a page (raw markdown + metadata). No auth.
+Read a page (raw markdown + metadata). No auth for public pages.
+
+**Password-protected pages** return \`401\` unless you supply the password as a
+\`?password=...\` query param or an \`X-Page-Password\` header (the owner cookie or
+\`?edit_token=...\` also works).
 
 **Response**
 
@@ -69,7 +79,8 @@ Read a page (raw markdown + metadata). No auth.
   "content": "# Hi\\n\\nIt works.",
   "created_at": 1761900000000,
   "updated_at": 1761900000000,
-  "views": 42
+  "views": 42,
+  "protected": false
 }
 \`\`\`
 
@@ -125,6 +136,22 @@ curl -X PUT https://YOUR-DEPLOYMENT/api/v1/pages/abc12345 \\
   -d '{"content":"updated body"}'
 \`\`\`
 
+## DELETE /pages/:slug
+
+Permanently delete a page. Owner-only — authorise with the \`pencil_uid\` cookie
+or the \`edit_token\` (as a \`?edit_token=...\` query param or in the JSON body).
+Returns \`403\` if neither matches. **Irreversible.**
+
+\`\`\`bash
+curl -X DELETE "https://YOUR-DEPLOYMENT/api/v1/pages/abc12345?edit_token=<token>"
+\`\`\`
+
+**Response**
+
+\`\`\`json
+{ "slug": "abc12345", "deleted": true }
+\`\`\`
+
 ## Notes for AI agents
 
 - Save the \`edit_token\` returned by \`POST /pages\` if you want to edit that
@@ -135,7 +162,7 @@ curl -X PUT https://YOUR-DEPLOYMENT/api/v1/pages/abc12345 \\
 - Max content size is **128 KB UTF-8 bytes** (an emoji is 4 bytes, not 1). Larger payloads get \`413\`, rejected by \`Content-Length\` before parsing.
 `;
 
-export function docsPage(origin: string): string {
+export function docsPage(origin: string, showPagesLink = false): string {
   const md = DOCS_MD.replaceAll("https://YOUR-DEPLOYMENT", origin);
   const rendered = renderMarkdown(md);
   const body = html`
@@ -146,5 +173,6 @@ export function docsPage(origin: string): string {
     description: "Public API for pencil.md. Free, no keys.",
     bodyClass: "page-docs",
     body: raw(body),
+    showPagesLink,
   });
 }

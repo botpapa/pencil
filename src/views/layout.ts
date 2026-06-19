@@ -53,6 +53,9 @@ export type LayoutOpts = {
   bodyData?: Record<string, string>;
   scripts?: string[]; // paths relative to /
   noIndex?: boolean;
+  // Show the "pages" link in the footer. Set by handlers when the current
+  // owner cookie has at least one published page.
+  showPagesLink?: boolean;
   // Topbar is opt-in. Pass a pre-rendered header string (or `raw(...)`) to
   // render it; omit to render no topbar at all. There is no built-in default.
   topbar?: string | Raw;
@@ -101,7 +104,7 @@ ${topbar}
 ${bodyHtml}
 </main>
 <footer class="footer">
-<a href="/about">about</a> &middot; <a href="https://github.com/botpapa/pencil">source</a> &middot; <a href="/api">api</a>
+<a href="/about">about</a> &middot; <a href="https://github.com/botpapa/pencil">source</a> &middot; <a href="/api">api</a>${opts.showPagesLink ? ` &middot; <a href="/pages">my pages</a>` : ""}
 </footer>
 </div>
 </body>

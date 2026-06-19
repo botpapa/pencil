@@ -1,5 +1,7 @@
 import { Hono } from "hono";
 import { securityHeaders } from "./lib/security.js";
+import { ensureOwnerCookie } from "./lib/auth.js";
+import { ownerHasPages } from "./lib/db.js";
 import pages from "./routes/pages.js";
 import api from "./routes/api.js";
 import stats from "./routes/stats.js";
@@ -18,10 +20,18 @@ app.use("*", securityHeaders);
 app.get("/health", (c) => c.json({ ok: true, app: c.env.APP_NAME }));
 
 // API docs (HTML).
-app.get("/api", (c) => c.html(docsPage(new URL(c.req.url).origin)));
+app.get("/api", async (c) => {
+  await ensureOwnerCookie(c);
+  const hasPages = await ownerHasPages(c.env.DB, c.get("ownerId"));
+  return c.html(docsPage(new URL(c.req.url).origin, hasPages));
+});
 
 // About page (SEO entry point).
-app.get("/about", (c) => c.html(aboutPage(new URL(c.req.url).origin)));
+app.get("/about", async (c) => {
+  await ensureOwnerCookie(c);
+  const hasPages = await ownerHasPages(c.env.DB, c.get("ownerId"));
+  return c.html(aboutPage(new URL(c.req.url).origin, hasPages));
+});
 
 // Public agent API.
 app.route("/api/v1", api);

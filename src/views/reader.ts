@@ -10,6 +10,7 @@ export type ReaderViewOpts = {
   createdAt: number;
   isOwner: boolean;
   indexable: boolean;
+  showPagesLink?: boolean;
 };
 
 function fmtDate(ms: number): string {
@@ -63,5 +64,6 @@ export function readerPage(opts: ReaderViewOpts): string {
     scripts: ["/client/reader.js"],
     body: raw(body),
     noIndex: !opts.indexable,
+    showPagesLink: opts.showPagesLink,
   });
 }

@@ -40,7 +40,7 @@ API docs: [${origin}/api](${origin}/api).
 const ABOUT_DESCRIPTION =
   "pencil.md is a free, open-source markdown publishing service. Paste markdown, get a shareable URL — no signup, no paywall.";
 
-export function aboutPage(origin: string): string {
+export function aboutPage(origin: string, showPagesLink = false): string {
   const rendered = renderMarkdown(ABOUT_BODY_MD(origin));
   const body = html`
     <article class="docs prose">
@@ -54,5 +54,6 @@ export function aboutPage(origin: string): string {
     canonicalUrl: `${origin}/about`,
     bodyClass: "page-about",
     body: raw(body),
+    showPagesLink,
   });
 }
