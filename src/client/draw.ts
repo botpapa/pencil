@@ -1575,9 +1575,20 @@ async function renderThumbnail(): Promise<string | undefined> {
         ctx.stroke();
       } else { ctx.beginPath(); ctx.moveTo(el.x, el.y); ctx.lineTo(el.x + el.w, el.y + el.h); ctx.stroke(); }
     } else if (el.type === "text") {
+      // Match the canvas: headings scale the base size (h1 1.9 / h2 1.5 / h3 1.25),
+      // line-height 1.5, and inline markdown markers are hidden (not shown raw).
       ctx.setLineDash([]);
-      ctx.fillStyle = el.color; ctx.font = `${el.fontSize}px Georgia, serif`; ctx.textBaseline = "top";
-      el.md.split("\n").forEach((ln, i) => ctx.fillText(ln.replace(/^#{1,6}\s+/, ""), el.x, el.y + i * el.fontSize * 1.5));
+      ctx.fillStyle = el.color; ctx.textBaseline = "top";
+      let yo = 0;
+      for (const ln of el.md.split("\n")) {
+        const hm = /^(#{1,6})\s/.exec(ln);
+        const f = hm ? ([1.9, 1.5, 1.25, 1, 1, 1][hm[1]!.length - 1] ?? 1) : 1;
+        const fs = el.fontSize * f;
+        ctx.font = `${hm ? "700 " : ""}${fs}px Georgia, serif`;
+        const text = ln.replace(/^#{1,6}\s+/, "").replace(/(\*\*|__|\*|_|~~|==|`)/g, "");
+        ctx.fillText(text, el.x, el.y + yo);
+        yo += fs * 1.5;
+      }
     }
     // images skipped (cross-origin canvas taint risk for the thumbnail)
   }

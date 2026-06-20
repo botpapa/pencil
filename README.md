@@ -48,6 +48,39 @@ A drawing is stored as a JSON scene (`{ schemaVersion, elements[], viewport }`)
 in the `drawings` table; pasted images and the share thumbnail live in R2.
 Identity is shared with `pencil.md` via a cookie scoped to the apex domain.
 
+### Scene format (creating drawings via the API)
+
+Create a drawing with `POST https://draw.pencil.md/` and a JSON body
+`{ title, scene, thumb? }`, where `scene` is the **stringified** JSON of
+`{ schemaVersion: 1, viewport: { x, y, zoom }, elements: [...] }`. Each element:
+
+```jsonc
+{ "id": "a", "type": "stroke", "points": [[x,y],…], "color": "#1A1714", "width": 3, "dash": "solid" }
+{ "id": "b", "type": "shape", "shape": "rect|ellipse|line|arrow",
+  "x": 0, "y": 0, "w": 160, "h": 90, "color": "#2B5C8A", "width": 4, "dash": "dashed", "fill": false }
+{ "id": "c", "type": "text", "x": 0, "y": 0, "md": "# Title", "color": "#1A1714", "fontSize": 24 }
+{ "id": "d", "type": "image", "x": 0, "y": 0, "w": 200, "h": 120, "url": "/img/abc.png" }
+```
+
+Layout rules agents must account for (there is **no auto-layout**):
+
+- **Absolute coordinates**, one infinite plane. Elements **paint in array order** —
+  later elements sit on top. You are responsible for not overlapping things.
+- **Text never wraps.** Each `\n` in `md` is its own line; the block grows to its
+  widest line. Insert your own line breaks.
+- **`fontSize` is the *base* size.** Markdown headings scale it: `#` ≈ **1.9×**,
+  `##` ≈ **1.5×**, `###` ≈ **1.25×**. Line height is **1.5×** the (scaled) size.
+  So a `# Heading` at `fontSize: 40` occupies ≈ `40 × 1.9 × 1.5 ≈ 114px` of height —
+  budget vertical space accordingly before placing the next element.
+- `md` supports the same live markdown as the editor (headings, `**bold**`,
+  `*italic*`, `` `code` ``, `~~strike~~`, `==mark==`, `> quote`, `- list`, links).
+- `color` is any hex; `dash` is `solid` | `dashed` | `dotted`; `fill` applies to
+  `rect`/`ellipse`. Images must reference an issued `/img/…` key (upload via
+  `POST /api/images`); external URLs are rejected.
+- `viewport` is how the drawing opens (pan `x`/`y` + `zoom`).
+- `thumb` (optional) is a `data:image/png;base64,…` used as the share/OG image;
+  the editor renders it from the canvas, so it mirrors heading scaling and fills.
+
 ## Self-Host In 5 Minutes
 
 You need a Cloudflare account, Node 20+, and `wrangler` through npm.
