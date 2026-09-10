@@ -30,7 +30,7 @@ import {
   pageAccessCookieName,
   PAGE_ACCESS_MAX_AGE,
 } from "../lib/password.js";
-import { isValidSlug, createPageWithUniqueSlug } from "../lib/slug.js";
+import { isValidSlug, newSlug, createPageWithUniqueSlug } from "../lib/slug.js";
 import { renderMarkdown, plaintextExcerpt } from "../lib/markdown.js";
 import { rejectIfOversize, PREVIEW_MAX_BYTES } from "../lib/limits.js";
 import {
@@ -46,7 +46,12 @@ import { readerPage } from "../views/reader.js";
 import { pagesListPage } from "../views/pages.js";
 import { unlockPage } from "../views/unlock.js";
 import { notFoundPage } from "../views/stats.js";
-import { MAX_CONTENT_BYTES, MAX_PASSWORD_LENGTH } from "../types.js";
+import {
+  MAX_CONTENT_BYTES,
+  MAX_PASSWORD_LENGTH,
+  MAX_IMAGE_BYTES,
+  ALLOWED_IMAGE_TYPES,
+} from "../types.js";
 import type { AppEnv } from "../types.js";
 
 // OG image always reflects the page's current content/lock state; bust the
@@ -389,6 +394,42 @@ app.put("/:slug", async (c) => {
     slug,
     url: `${originUrl(c)}/${slug}`,
     updated_at: updatedAt,
+  });
+});
+
+// ---------- image upload + serving ----------
+//
+// Backs the editor's "/add-image" command. Mirrors draw.pencil.md's upload:
+// same bucket, key scheme and caps, so images are interchangeable between the
+// two apps. The returned URL is absolute — it goes straight into a markdown
+// ![alt](url), and the renderer only accepts http(s) image sources.
+
+app.post("/api/images", async (c) => {
+  await ensureOwnerCookie(c);
+  const ct = c.req.header("Content-Type") ?? "";
+  if (!ALLOWED_IMAGE_TYPES.includes(ct)) return c.json({ error: "unsupported image type" }, 415);
+  // Require a Content-Length within the cap so unknown-length / oversize bodies
+  // are rejected before we buffer them.
+  const tooBig = rejectIfOversize(c, MAX_IMAGE_BYTES);
+  if (tooBig) return tooBig;
+  const buf = await c.req.arrayBuffer();
+  if (buf.byteLength > MAX_IMAGE_BYTES) return c.json({ error: "image too large" }, 413);
+  const ext = ct.split("/")[1]!.replace("jpeg", "jpg");
+  const key = `img/${c.get("ownerId").slice(0, 6)}-${newSlug()}.${ext}`;
+  await c.env.IMAGES.put(key, buf, { httpMetadata: { contentType: ct } });
+  return c.json({ url: `${originUrl(c)}/img/${key.slice(4)}`, key }, 201);
+});
+
+app.get("/img/:name", async (c) => {
+  const name = c.req.param("name");
+  if (!/^[A-Za-z0-9._-]+$/.test(name)) return c.text("not found", 404);
+  const obj = await c.env.IMAGES.get(`img/${name}`);
+  if (!obj) return c.text("not found", 404);
+  return new Response(obj.body, {
+    headers: {
+      "Content-Type": obj.httpMetadata?.contentType ?? "application/octet-stream",
+      "Cache-Control": "public, max-age=31536000, immutable",
+    },
   });
 });
 

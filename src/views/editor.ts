@@ -30,18 +30,19 @@ export function editorPage(opts: EditorViewOpts): string {
         <button id="tab-preview" role="tab" aria-selected="false" aria-controls="pane-preview" type="button">preview</button>
       </div>
 
+      <input
+        class="title"
+        id="title-input"
+        type="text"
+        maxlength="200"
+        autocomplete="off"
+        spellcheck="true"
+        placeholder="title"
+        value="${opts.title}"
+      />
+
       <div class="split" data-preview-open="false">
         <div class="pane editor-pane" id="pane-edit" role="tabpanel" aria-labelledby="tab-edit">
-          <input
-            class="title"
-            id="title-input"
-            type="text"
-            maxlength="200"
-            autocomplete="off"
-            spellcheck="true"
-            placeholder="title"
-            value="${opts.title}"
-          />
           <textarea
             id="md-input"
             spellcheck="true"

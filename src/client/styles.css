@@ -593,9 +593,8 @@ body.page-editor .app {
   min-height: 0;
 }
 .split > .pane.editor-pane {
-  /* The pane itself is a flex column: title input on top, textarea (with its
-   * own scroll) below. The pane never scrolls — the textarea does — so the
-   * title input always stays pinned at the top of the editor pane. */
+  /* The pane never scrolls — the textarea inside does. The title input lives
+   * above the split (full page width) so both panes start at the same height. */
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -610,7 +609,7 @@ body.page-editor .app {
   border-left: var(--rule-w) solid var(--rule);
 }
 
-.editor-pane input.title {
+.editor-shell > input.title {
   flex: 0 0 auto;
   font-family: var(--font-serif);
   font-size: 1.6rem;
@@ -625,7 +624,7 @@ body.page-editor .app {
   letter-spacing: -0.01em;
   caret-color: var(--accent);
 }
-.editor-pane input.title::placeholder { color: var(--ink-soft); font-style: italic; font-weight: 400; }
+.editor-shell > input.title::placeholder { color: var(--ink-soft); font-style: italic; font-weight: 400; }
 
 .editor-pane textarea {
   flex: 1;
@@ -706,12 +705,52 @@ body.page-editor .app {
     field-sizing: content;
   }
 
-  .editor-pane input.title {
+  .editor-shell > input.title {
     /* Buttons are smaller on mobile (preview-toggle is hidden); shrink the
      * reserved gutter so the title still has room to breathe. */
     padding: 0.9rem 8rem 0.3rem var(--pad);
     font-size: 1.4rem;
   }
+}
+
+/* ---------- slash command menu ---------- */
+
+.slash-menu {
+  position: fixed;
+  z-index: 60;
+  min-width: 200px;
+  background: var(--bg);
+  border: var(--rule-w) solid var(--rule);
+  border-radius: 6px;
+  padding: 3px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.14);
+}
+.slash-item {
+  display: flex;
+  width: 100%;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1.2rem;
+  background: none;
+  border: none;
+  text-align: left;
+  padding: 0.45rem 0.6rem;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.slash-item .slash-label {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--ink);
+}
+.slash-item .slash-hint {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-soft);
+}
+.slash-item:hover,
+.slash-item[aria-selected="true"] {
+  background: var(--bg-soft);
 }
 
 /* ---------- toast ---------- */

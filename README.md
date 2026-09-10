@@ -13,7 +13,8 @@ change it later.
 
 ## Features
 
-- Markdown editor with live preview and local drafts.
+- Markdown editor with live preview, local drafts, and a `/` command menu
+  (type `/` for "Add image": upload straight into the document).
 - Clean reader pages with syntax highlighting and heading anchors.
 - **Infinite drawing canvas** at `draw.pencil.md` — freehand, shapes, images,
   and Obsidian-style live-markdown text, with the same save/share/edit flow.
@@ -175,7 +176,7 @@ rules rather than in the Worker. Recommended rules:
 | Path | Method | Suggested limit |
 | --- | --- | --- |
 | `/:slug/unlock` (both apps) | POST | 10 / minute / IP |
-| `draw.*/api/images` | POST | 30 / hour / IP |
+| `/api/images` (both apps) | POST | 30 / hour / IP |
 | `/` and `draw.*/` (create) | POST | 60 / hour / IP |
 
 In-Worker, uploads and bodies are already size-capped (`MAX_IMAGE_BYTES`,

@@ -7,6 +7,7 @@
 //   restored on load; cleared on successful save. No beforeunload prompt.
 
 import { expandTallCells } from "./lib/tableLayout.js";
+import { slashContext, insertBlock, type SlashContext } from "./lib/slashCommands.js";
 
 type Mode = "new" | "edit";
 
@@ -288,6 +289,7 @@ function onChange(): void {
   scheduleDraftWrite();
   schedulePreview();
   autosizeMdInput();
+  updateSlashMenu();
 }
 
 mdInput.addEventListener("input", onChange);
@@ -396,6 +398,256 @@ mdInput.addEventListener("keydown", (e) => {
   onChange();
 });
 
+// ---------- slash commands ----------
+//
+// Typing "/" (at line start or after whitespace) opens a small suggestion
+// dropdown at the caret. The query after the slash prefix-matches command
+// names and their dash-separated words ("/a", "/add-im", "/ima" all keep
+// "Add image" up); a space or a non-matching character dismisses it, so "/"
+// still types fine anywhere. Selecting "Add image" inserts an uploading
+// placeholder on the current line (or the next one when the command was typed
+// after other text), opens the file picker, uploads to POST /api/images and
+// swaps the placeholder for the final ![alt](url).
+
+const slashMenu = document.createElement("div");
+slashMenu.className = "slash-menu";
+slashMenu.setAttribute("role", "listbox");
+slashMenu.hidden = true;
+document.body.appendChild(slashMenu);
+
+let slashCtx: SlashContext | null = null;
+let slashActive = 0;
+
+function hideSlashMenu(): void {
+  slashCtx = null;
+  slashMenu.hidden = true;
+}
+
+function renderSlashMenu(): void {
+  if (!slashCtx) return;
+  slashMenu.innerHTML = "";
+  slashCtx.matches.forEach((cmd, i) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "slash-item";
+    b.setAttribute("role", "option");
+    b.setAttribute("aria-selected", i === slashActive ? "true" : "false");
+    const label = document.createElement("span");
+    label.className = "slash-label";
+    label.textContent = cmd.label;
+    const hint = document.createElement("span");
+    hint.className = "slash-hint";
+    hint.textContent = "/" + cmd.id;
+    b.appendChild(label);
+    b.appendChild(hint);
+    // pointerdown, not click: run before the textarea loses focus.
+    b.addEventListener("pointerdown", (e) => {
+      e.preventDefault();
+      runSlashCommand(cmd.id);
+    });
+    slashMenu.appendChild(b);
+  });
+}
+
+// Viewport coordinates of the caret, via the shared wrapping mirror.
+function caretViewportXY(): { left: number; top: number; lineHeight: number } {
+  const ta = mdInput!;
+  const cs = getComputedStyle(ta);
+  const m = getMirror();
+  syncMirrorStyles(m, ta, cs);
+  const caret = ta.selectionStart ?? 0;
+  m.innerHTML = escapeForMirror(ta.value.slice(0, caret)) + `<span data-caret>​</span>`;
+  const span = m.querySelector<HTMLElement>("[data-caret]")!;
+  const mRect = m.getBoundingClientRect();
+  const sRect = span.getBoundingClientRect();
+  const taRect = ta.getBoundingClientRect();
+  return {
+    left: taRect.left + (sRect.left - mRect.left) - ta.scrollLeft,
+    top: taRect.top + (sRect.top - mRect.top) - ta.scrollTop,
+    lineHeight: parseFloat(cs.lineHeight) || sRect.height || 24,
+  };
+}
+
+function positionSlashMenu(): void {
+  const { left, top, lineHeight } = caretViewportXY();
+  slashMenu.hidden = false; // must be laid out to measure
+  const mw = slashMenu.offsetWidth;
+  const mh = slashMenu.offsetHeight;
+  const x = Math.max(8, Math.min(left, window.innerWidth - mw - 8));
+  let y = top + lineHeight + 4;
+  if (y + mh > window.innerHeight - 8) y = top - mh - 4; // flip above the caret
+  slashMenu.style.left = x + "px";
+  slashMenu.style.top = Math.max(8, y) + "px";
+}
+
+function updateSlashMenu(): void {
+  const ta = mdInput!;
+  if (document.activeElement !== ta || ta.selectionStart !== ta.selectionEnd) {
+    hideSlashMenu();
+    return;
+  }
+  const ctx = slashContext(ta.value, ta.selectionStart);
+  if (!ctx) {
+    hideSlashMenu();
+    return;
+  }
+  if (!slashCtx || slashCtx.start !== ctx.start) slashActive = 0;
+  slashCtx = ctx;
+  slashActive = Math.min(slashActive, ctx.matches.length - 1);
+  renderSlashMenu();
+  positionSlashMenu();
+}
+
+// Capture phase so the menu wins over the textarea's own Tab handler.
+window.addEventListener(
+  "keydown",
+  (e) => {
+    if (slashMenu.hidden || !slashCtx) return;
+    if (e.key === "Escape") {
+      hideSlashMenu();
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      const n = slashCtx.matches.length;
+      slashActive = (slashActive + (e.key === "ArrowDown" ? 1 : n - 1)) % n;
+      renderSlashMenu();
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
+    if (e.key === "Enter" || e.key === "Tab") {
+      const cmd = slashCtx.matches[slashActive];
+      if (cmd) {
+        e.preventDefault();
+        e.stopPropagation();
+        runSlashCommand(cmd.id);
+      }
+    }
+  },
+  true,
+);
+
+// Re-evaluate on caret movement that doesn't fire `input` (clicks, arrows).
+mdInput.addEventListener("click", updateSlashMenu);
+mdInput.addEventListener("keyup", (e) => {
+  if (e.key.startsWith("Arrow") || e.key === "Home" || e.key === "End") updateSlashMenu();
+});
+mdInput.addEventListener("blur", hideSlashMenu);
+mdInput.addEventListener("scroll", hideSlashMenu);
+window.addEventListener("resize", hideSlashMenu);
+
+// ---------- image upload (Add image command) ----------
+
+// Mirror the server-side caps (src/types.ts).
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+const IMAGE_ACCEPT = "image/png,image/jpeg,image/gif,image/webp";
+
+const fileInput = document.createElement("input");
+fileInput.type = "file";
+fileInput.accept = IMAGE_ACCEPT;
+fileInput.hidden = true;
+document.body.appendChild(fileInput);
+
+let pendingPlaceholder: string | null = null;
+
+function runSlashCommand(id: string): void {
+  const ctx = slashCtx;
+  hideSlashMenu();
+  if (!ctx || id !== "add-image") return;
+  const ta = mdInput!;
+  const nonce = Math.random().toString(36).slice(2, 8);
+  // The "#up-…" src never survives the renderer (images must be http(s)), so
+  // the placeholder shows in the source but renders as nothing in preview.
+  const placeholder = `![Uploading image…](#up-${nonce})`;
+  const ins = insertBlock(ta.value, ctx.start, ta.selectionStart ?? ctx.start, placeholder);
+  ta.value = ins.value;
+  ta.setSelectionRange(ins.blockEnd, ins.blockEnd);
+  pendingPlaceholder = placeholder;
+  onChange();
+  fileInput.value = "";
+  fileInput.click();
+}
+
+// Swap the placeholder (wherever it is now — the user may have kept typing)
+// for its replacement, keeping the caret stable. No-op if it was deleted.
+function replacePlaceholder(placeholder: string, replacement: string): void {
+  const ta = mdInput!;
+  let idx = ta.value.indexOf(placeholder);
+  if (idx === -1) return;
+  let len = placeholder.length;
+  if (replacement === "") {
+    // Removing entirely: if the placeholder occupies a whole line, take the
+    // line break with it instead of leaving a blank line behind.
+    const atLineStart = idx === 0 || ta.value[idx - 1] === "\n";
+    if (atLineStart && ta.value[idx + len] === "\n") len += 1;
+    else if (ta.value[idx - 1] === "\n" && idx + len === ta.value.length) {
+      idx -= 1;
+      len += 1;
+    }
+  }
+  const caret = ta.selectionStart ?? 0;
+  ta.value = ta.value.slice(0, idx) + replacement + ta.value.slice(idx + len);
+  const delta = replacement.length - len;
+  const newCaret = caret <= idx ? caret : Math.max(idx + replacement.length, caret + delta);
+  ta.setSelectionRange(newCaret, newCaret);
+  onChange();
+}
+
+async function uploadImage(file: File, placeholder: string): Promise<void> {
+  try {
+    const res = await fetch("/api/images", {
+      method: "POST",
+      headers: { "Content-Type": file.type },
+      body: file,
+    });
+    if (!res.ok) {
+      let msg = `image upload failed (${res.status})`;
+      try {
+        const j = (await res.json()) as { error?: string };
+        if (j.error) msg = j.error;
+      } catch {
+        /* non-JSON error body */
+      }
+      replacePlaceholder(placeholder, "");
+      showSaveError(msg);
+      return;
+    }
+    const j = (await res.json()) as { url: string };
+    // Filename (sans extension) as alt text; strip markdown-breaking brackets.
+    const alt = file.name.replace(/\.[a-z0-9]+$/i, "").replace(/[[\]()]/g, "") || "image";
+    replacePlaceholder(placeholder, `![${alt}](${j.url})`);
+  } catch {
+    replacePlaceholder(placeholder, "");
+    showSaveError("image upload failed (network)");
+  }
+}
+
+fileInput.addEventListener("change", () => {
+  const file = fileInput.files?.[0];
+  const placeholder = pendingPlaceholder;
+  pendingPlaceholder = null;
+  if (!placeholder) return;
+  if (!file) {
+    replacePlaceholder(placeholder, "");
+    return;
+  }
+  if (file.size > MAX_IMAGE_BYTES) {
+    replacePlaceholder(placeholder, "");
+    showSaveError("image too large (max 5 MB)");
+    return;
+  }
+  mdInput!.focus();
+  void uploadImage(file, placeholder);
+});
+// Picker dismissed without a file — drop the placeholder.
+fileInput.addEventListener("cancel", () => {
+  const placeholder = pendingPlaceholder;
+  pendingPlaceholder = null;
+  if (placeholder) replacePlaceholder(placeholder, "");
+});
+
 saveBtn.addEventListener("click", () => void save());
 
 // Cmd/Ctrl-S
@@ -447,14 +699,10 @@ function escapeForMirror(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
-// Measure the content-space pixel offset (line 0 → 0) of each requested source
-// line inside the textarea, reproducing its wrapping in the mirror.
-function measureEditorOffsets(lines: number[]): Map<number, number> {
-  const ta = mdInput!;
-  const cs = getComputedStyle(ta);
-  editorPadTopPx = parseFloat(cs.paddingTop) || 0;
-  const m = getMirror();
-  // Match every property that affects line wrapping / height.
+// Match every property that affects line wrapping / height, so the mirror
+// reproduces the textarea's layout exactly. Shared by the scroll-sync line
+// measurement and the slash-menu caret measurement.
+function syncMirrorStyles(m: HTMLDivElement, ta: HTMLTextAreaElement, cs: CSSStyleDeclaration): void {
   m.style.width = ta.clientWidth + "px";
   m.style.paddingTop = cs.paddingTop;
   m.style.paddingRight = cs.paddingRight;
@@ -469,6 +717,16 @@ function measureEditorOffsets(lines: number[]): Map<number, number> {
   m.style.tabSize = cs.tabSize;
   m.style.overflowWrap = cs.overflowWrap || "break-word";
   m.style.wordBreak = cs.wordBreak;
+}
+
+// Measure the content-space pixel offset (line 0 → 0) of each requested source
+// line inside the textarea, reproducing its wrapping in the mirror.
+function measureEditorOffsets(lines: number[]): Map<number, number> {
+  const ta = mdInput!;
+  const cs = getComputedStyle(ta);
+  editorPadTopPx = parseFloat(cs.paddingTop) || 0;
+  const m = getMirror();
+  syncMirrorStyles(m, ta, cs);
 
   const srcLines = ta.value.split("\n");
   const need = new Set(lines);
