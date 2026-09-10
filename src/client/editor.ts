@@ -645,6 +645,18 @@ async function uploadImages(files: File[], placeholder: string, command: UploadC
   if (failed > 0) showSaveError(`${failed} of ${files.length} images failed to upload`);
 }
 
+// Shared tail of every upload path: drop oversize files, bail out (removing
+// the placeholder) when nothing is left, otherwise kick off the uploads.
+function startUpload(all: File[], placeholder: string, command: UploadCommand): void {
+  const files = all.filter((f) => f.size <= MAX_IMAGE_BYTES);
+  if (files.length < all.length) showSaveError("skipped images over 5 MB");
+  if (files.length === 0) {
+    replacePlaceholder(placeholder, "");
+    return;
+  }
+  void uploadImages(files, placeholder, command);
+}
+
 fileInput.addEventListener("change", () => {
   const all = Array.from(fileInput.files ?? []);
   const placeholder = pendingPlaceholder;
@@ -655,14 +667,34 @@ fileInput.addEventListener("change", () => {
     replacePlaceholder(placeholder, "");
     return;
   }
-  const files = all.filter((f) => f.size <= MAX_IMAGE_BYTES);
-  if (files.length < all.length) showSaveError("skipped images over 5 MB");
-  if (files.length === 0) {
-    replacePlaceholder(placeholder, "");
-    return;
-  }
   mdInput!.focus();
-  void uploadImages(files, placeholder, command);
+  startUpload(all, placeholder, command);
+});
+
+// Pasting image data (a screenshot, copied files) uploads it like the
+// "Add image" command: placeholder at the caret (own line, or the next line
+// when the caret sits after text), then swapped for ![alt](url). A clipboard
+// with both text and an image is treated as an image paste, matching how
+// GitHub-style editors behave. Plain-text pastes keep the browser default.
+const PASTE_IMAGE_TYPES = IMAGE_ACCEPT.split(",");
+mdInput.addEventListener("paste", (e) => {
+  const files = Array.from(e.clipboardData?.files ?? []).filter((f) =>
+    PASTE_IMAGE_TYPES.includes(f.type),
+  );
+  if (files.length === 0) return;
+  e.preventDefault();
+  const ta = mdInput!;
+  const start = ta.selectionStart ?? ta.value.length;
+  const end = ta.selectionEnd ?? start;
+  const nonce = Math.random().toString(36).slice(2, 8);
+  const placeholder = `![Uploading image…](#up-${nonce})`;
+  // insertBlock also swallows the selected range, so pasting over a selection
+  // replaces it, like a normal paste would.
+  const ins = insertBlock(ta.value, start, end, placeholder);
+  ta.value = ins.value;
+  ta.setSelectionRange(ins.blockEnd, ins.blockEnd);
+  onChange();
+  startUpload(files, placeholder, "add-image");
 });
 // Picker dismissed without a file — drop the placeholder.
 fileInput.addEventListener("cancel", () => {
