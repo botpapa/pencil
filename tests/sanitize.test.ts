@@ -100,6 +100,14 @@ describe("renderMarkdown core", () => {
     expect(out).not.toContain('<ul start');
   });
 
+  it("renders a single newline as a line break", () => {
+    const out = renderMarkdown("line one\nline two");
+    expect(out).toContain("<br");
+    // Blank line still starts a new paragraph, and code blocks keep raw newlines.
+    expect(renderMarkdown("para one\n\npara two").match(/<p/g)?.length).toBe(2);
+    expect(renderMarkdown("```\na\nb\n```")).not.toContain("<br");
+  });
+
   it("renders a carousel fence as slides", () => {
     const md = "```carousel\n![a](https://x.example/a.png)\nhttps://x.example/b.png\n```";
     const out = renderMarkdown(md);

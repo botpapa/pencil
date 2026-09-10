@@ -101,7 +101,9 @@ function makeRenderer(): MarkdownIt {
     html: false,
     linkify: true,
     typographer: true,
-    breaks: false,
+    // A single newline renders as a line break (telegra.ph-style) — authors
+    // shouldn't need the trailing-two-spaces trick to break a line.
+    breaks: true,
     highlight: (code, lang) => {
       const langClass = lang && hljs.getLanguage(lang) ? `language-${lang}` : "language-plaintext";
       const highlighted = highlight(code, lang);
