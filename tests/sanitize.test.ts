@@ -87,6 +87,19 @@ describe("renderMarkdown core", () => {
     expect(out).toMatch(/<input[^>]*type="checkbox"[^>]*disabled/);
   });
 
+  it("keeps the start number when an ordered list resumes after a paragraph", () => {
+    const md = "1. first\n\nsome prose in between\n\n2. second\n3. third";
+    const out = renderMarkdown(md);
+    expect(out).toMatch(/<ol[^>]*\sstart="2"/);
+  });
+
+  it("does not let authors inject arbitrary attributes via start", () => {
+    // html: false means <ol> can only come from markdown-it itself, but the
+    // sanitizer must still drop start anywhere else it appears.
+    const out = renderMarkdown('<ul start="5"><li>x</li></ul>');
+    expect(out).not.toContain('<ul start');
+  });
+
   it("emits data-source-line on top-level blocks for scroll sync", () => {
     const md = "para one\n\npara two\n\n# heading";
     const out = renderMarkdown(md);

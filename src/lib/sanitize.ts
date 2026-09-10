@@ -80,6 +80,7 @@ const sanitizeOpts: sanitizeHtml.IOptions = {
     div: ["class"],
     section: ["class"],
     nav: ["class"],
+    ol: ["start"],
     th: ["colspan", "rowspan", "align"],
     td: ["colspan", "rowspan", "align"],
     input: ["type", "checked", "disabled"],
