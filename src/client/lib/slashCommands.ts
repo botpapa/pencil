@@ -7,7 +7,10 @@ export type SlashCommand = {
   label: string; // human label shown in the dropdown ("Add image")
 };
 
-export const SLASH_COMMANDS: SlashCommand[] = [{ id: "add-image", label: "Add image" }];
+export const SLASH_COMMANDS: SlashCommand[] = [
+  { id: "add-image", label: "Add image" },
+  { id: "add-carousel", label: "Add carousel" },
+];
 
 // A command matches while the query is a prefix of the full name OR of any of
 // its dash-separated words — so "/a", "/add", "/add-im" and "/ima" all keep

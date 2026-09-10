@@ -23,6 +23,18 @@ describe("slashContext — token detection + matching", () => {
     }
   });
 
+  it("matches add-carousel by name and by word (/c, /car, /add-car)", () => {
+    for (const q of ["/c", "/car", "/carousel", "/add-car"]) {
+      const ctx = slashContext(q, q.length);
+      expect(ctx?.matches.map((m) => m.id), q).toContain("add-carousel");
+    }
+  });
+
+  it("suggests both commands on the shared prefix /add", () => {
+    const ctx = slashContext("/add", 4);
+    expect(ctx?.matches.map((m) => m.id)).toEqual(["add-image", "add-carousel"]);
+  });
+
   it("is case-insensitive", () => {
     expect(slashContext("/ADD", 4)?.matches[0]?.id).toBe("add-image");
   });

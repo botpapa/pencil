@@ -5,6 +5,7 @@
 // - Auto-expand tall table cells past the CSS 20vw/70vw cap.
 
 import { expandTallCells } from "./lib/tableLayout.js";
+import { enhanceCarousels, initLightbox } from "./lib/carousel.js";
 
 (() => {
   const hash = window.location.hash;
@@ -48,6 +49,8 @@ import { expandTallCells } from "./lib/tableLayout.js";
   // The reader script is appended at the bottom of <body>, so the prose
   // DOM is already parsed by the time we run.
   expandTallCells(document.body);
+  enhanceCarousels(document.body);
+  if (proseRoot instanceof HTMLElement) initLightbox(proseRoot);
 
   let resizeTimer: ReturnType<typeof setTimeout> | undefined;
   window.addEventListener("resize", () => {

@@ -8,6 +8,7 @@
 
 import { expandTallCells } from "./lib/tableLayout.js";
 import { slashContext, insertBlock, type SlashContext } from "./lib/slashCommands.js";
+import { enhanceCarousels, initLightbox } from "./lib/carousel.js";
 
 type Mode = "new" | "edit";
 
@@ -204,6 +205,7 @@ async function runPreview(): Promise<void> {
     previewOut!.innerHTML = html;
     lastRenderedValue = body;
     expandTallCells(previewOut!);
+    enhanceCarousels(previewOut!);
     rebuildSyncPoints();
   } catch (err) {
     if (id !== lastPreviewRequestId) return;
@@ -547,24 +549,29 @@ const IMAGE_ACCEPT = "image/png,image/jpeg,image/gif,image/webp";
 const fileInput = document.createElement("input");
 fileInput.type = "file";
 fileInput.accept = IMAGE_ACCEPT;
+fileInput.multiple = true;
 fileInput.hidden = true;
 document.body.appendChild(fileInput);
 
+type UploadCommand = "add-image" | "add-carousel";
 let pendingPlaceholder: string | null = null;
+let pendingCommand: UploadCommand = "add-image";
 
 function runSlashCommand(id: string): void {
   const ctx = slashCtx;
   hideSlashMenu();
-  if (!ctx || id !== "add-image") return;
+  if (!ctx || (id !== "add-image" && id !== "add-carousel")) return;
   const ta = mdInput!;
   const nonce = Math.random().toString(36).slice(2, 8);
   // The "#up-…" src never survives the renderer (images must be http(s)), so
   // the placeholder shows in the source but renders as nothing in preview.
-  const placeholder = `![Uploading image…](#up-${nonce})`;
+  const noun = id === "add-carousel" ? "carousel" : "image";
+  const placeholder = `![Uploading ${noun}…](#up-${nonce})`;
   const ins = insertBlock(ta.value, ctx.start, ta.selectionStart ?? ctx.start, placeholder);
   ta.value = ins.value;
   ta.setSelectionRange(ins.blockEnd, ins.blockEnd);
   pendingPlaceholder = placeholder;
+  pendingCommand = id;
   onChange();
   fileInput.value = "";
   fileInput.click();
@@ -595,51 +602,62 @@ function replacePlaceholder(placeholder: string, replacement: string): void {
   onChange();
 }
 
-async function uploadImage(file: File, placeholder: string): Promise<void> {
+// Filename (sans extension) as alt text; strip markdown-breaking brackets.
+function altFromName(name: string): string {
+  return name.replace(/\.[a-z0-9]+$/i, "").replace(/[[\]()]/g, "") || "image";
+}
+
+async function uploadOne(file: File): Promise<string | null> {
   try {
     const res = await fetch("/api/images", {
       method: "POST",
       headers: { "Content-Type": file.type },
       body: file,
     });
-    if (!res.ok) {
-      let msg = `image upload failed (${res.status})`;
-      try {
-        const j = (await res.json()) as { error?: string };
-        if (j.error) msg = j.error;
-      } catch {
-        /* non-JSON error body */
-      }
-      replacePlaceholder(placeholder, "");
-      showSaveError(msg);
-      return;
-    }
+    if (!res.ok) return null;
     const j = (await res.json()) as { url: string };
-    // Filename (sans extension) as alt text; strip markdown-breaking brackets.
-    const alt = file.name.replace(/\.[a-z0-9]+$/i, "").replace(/[[\]()]/g, "") || "image";
-    replacePlaceholder(placeholder, `![${alt}](${j.url})`);
+    return `![${altFromName(file.name)}](${j.url})`;
   } catch {
-    replacePlaceholder(placeholder, "");
-    showSaveError("image upload failed (network)");
+    return null;
   }
 }
 
+async function uploadImages(files: File[], placeholder: string, command: UploadCommand): Promise<void> {
+  const results = await Promise.all(files.map(uploadOne));
+  const done = results.filter((r): r is string => r !== null);
+  const failed = results.length - done.length;
+  if (done.length === 0) {
+    replacePlaceholder(placeholder, "");
+    showSaveError(files.length === 1 ? "image upload failed" : "image uploads failed");
+    return;
+  }
+  // A single image never needs the carousel wrapper.
+  const replacement =
+    command === "add-carousel" && done.length > 1
+      ? "```carousel\n" + done.join("\n") + "\n```"
+      : done.join("\n\n");
+  replacePlaceholder(placeholder, replacement);
+  if (failed > 0) showSaveError(`${failed} of ${files.length} images failed to upload`);
+}
+
 fileInput.addEventListener("change", () => {
-  const file = fileInput.files?.[0];
+  const all = Array.from(fileInput.files ?? []);
   const placeholder = pendingPlaceholder;
+  const command = pendingCommand;
   pendingPlaceholder = null;
   if (!placeholder) return;
-  if (!file) {
+  if (all.length === 0) {
     replacePlaceholder(placeholder, "");
     return;
   }
-  if (file.size > MAX_IMAGE_BYTES) {
+  const files = all.filter((f) => f.size <= MAX_IMAGE_BYTES);
+  if (files.length < all.length) showSaveError("skipped images over 5 MB");
+  if (files.length === 0) {
     replacePlaceholder(placeholder, "");
-    showSaveError("image too large (max 5 MB)");
     return;
   }
   mdInput!.focus();
-  void uploadImage(file, placeholder);
+  void uploadImages(files, placeholder, command);
 });
 // Picker dismissed without a file — drop the placeholder.
 fileInput.addEventListener("cancel", () => {

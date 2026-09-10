@@ -13,8 +13,10 @@ change it later.
 
 ## Features
 
-- Markdown editor with live preview, local drafts, and a `/` command menu
-  (type `/` for "Add image": upload straight into the document).
+- Markdown editor with live preview, local drafts, and a `/` command menu:
+  "Add image" (multi-file upload straight into the document) and
+  "Add carousel" (a swipeable ```` ```carousel ```` image gallery).
+- Inline images are height-capped and open full-screen in a lightbox on click.
 - Clean reader pages with syntax highlighting and heading anchors.
 - **Infinite drawing canvas** at `draw.pencil.md` — freehand, shapes, images,
   and Obsidian-style live-markdown text, with the same save/share/edit flow.

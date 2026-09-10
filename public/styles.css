@@ -375,10 +375,97 @@ a:focus-visible, button:focus-visible, textarea:focus-visible, input:focus-visib
 
 .prose img {
   max-width: 100%;
+  /* Cap inline height (~15 text lines) so a tall phone screenshot doesn't
+   * take over the page; the lightbox (click) shows it full-screen. */
+  max-height: 28rem;
+  width: auto;
   height: auto;
   display: block;
   margin: 1.5em auto;
   border: var(--rule-w) solid var(--rule);
+  cursor: zoom-in;
+}
+
+/* ---------- image carousel (```carousel fence) ---------- */
+
+.prose .carousel {
+  position: relative;
+  margin: 1.5em 0;
+}
+.prose .carousel-track {
+  display: flex;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  scrollbar-width: none;
+  border: var(--rule-w) solid var(--rule);
+  border-radius: 6px;
+  background: var(--bg-soft);
+}
+.prose .carousel-track::-webkit-scrollbar { display: none; }
+.prose .carousel-slide {
+  flex: 0 0 100%;
+  scroll-snap-align: start;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 100%;
+}
+.prose .carousel-slide img {
+  margin: 0;
+  border: none;
+  max-height: 28rem;
+  object-fit: contain;
+}
+.carousel-btn {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 2rem;
+  height: 2.6rem;
+  border: var(--rule-w) solid var(--rule);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--ink);
+  font-size: 1.3rem;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.85;
+}
+.carousel-btn:hover { opacity: 1; }
+.carousel-btn[disabled] { opacity: 0.25; cursor: default; }
+.carousel-prev { left: 0.5rem; }
+.carousel-next { right: 0.5rem; }
+.carousel-dots {
+  display: flex;
+  justify-content: center;
+  gap: 0.4rem;
+  margin-top: 0.6rem;
+}
+.carousel-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--rule);
+  transition: background 150ms ease;
+}
+.carousel-dot.active { background: var(--ink); }
+
+/* ---------- lightbox ---------- */
+
+.lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: rgba(0, 0, 0, 0.88);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: zoom-out;
+}
+.lightbox img {
+  max-width: 96vw;
+  max-height: 96vh;
+  object-fit: contain;
 }
 
 .prose mark { background: var(--accent); color: var(--accent-ink); padding: 0 0.15em; }

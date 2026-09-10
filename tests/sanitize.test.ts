@@ -100,6 +100,35 @@ describe("renderMarkdown core", () => {
     expect(out).not.toContain('<ul start');
   });
 
+  it("renders a carousel fence as slides", () => {
+    const md = "```carousel\n![a](https://x.example/a.png)\nhttps://x.example/b.png\n```";
+    const out = renderMarkdown(md);
+    expect(out).toMatch(/<div class="carousel"[^>]*><div class="carousel-track">/);
+    expect(out.match(/carousel-slide/g)?.length).toBe(2);
+    expect(out).toContain('src="https://x.example/a.png"');
+    expect(out).toContain('alt="a"');
+    expect(out).not.toContain("<pre>");
+  });
+
+  it("accepts the gallery alias and skips unsafe carousel lines", () => {
+    const md = "```gallery\n![x](javascript:alert(1))\nnot a url\n![ok](https://x.example/ok.png)\n```";
+    const out = renderMarkdown(md);
+    expect(out.match(/carousel-slide/g)?.length).toBe(1);
+    expect(out).not.toContain("javascript:");
+  });
+
+  it("falls back to a code block when a carousel has no valid images", () => {
+    const out = renderMarkdown("```carousel\njust text\n```");
+    expect(out).toContain("<pre>");
+    expect(out).not.toContain("carousel-track");
+  });
+
+  it("escapes html in carousel alt text", () => {
+    const out = renderMarkdown('```carousel\n![<b>"x"](https://x.example/a.png)\n```');
+    expect(out).not.toContain("<b>");
+    expect(out).toContain("&lt;b&gt;");
+  });
+
   it("emits data-source-line on top-level blocks for scroll sync", () => {
     const md = "para one\n\npara two\n\n# heading";
     const out = renderMarkdown(md);

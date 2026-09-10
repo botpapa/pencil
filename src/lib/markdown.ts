@@ -201,6 +201,50 @@ function makeRenderer(): MarkdownIt {
   };
   md.renderer.rules.table_close = () => `</table></div>`;
 
+  // ```carousel (alias: gallery) fences render as a horizontally scrollable
+  // image carousel instead of a code block. Each non-empty line is either a
+  // markdown image (![alt](url)) or a bare URL; lines that don't parse or
+  // fail the http(s) src check are skipped. With no valid image at all the
+  // fence falls back to the default code-block rendering, so foreign markdown
+  // degrades to a readable list of URLs rather than vanishing. The client
+  // (reader.js / editor.js) adds prev/next buttons and dots on top; without
+  // JS the track still swipes via CSS scroll-snap.
+  const defaultFence =
+    md.renderer.rules.fence ||
+    function (tokens, idx, opts, _env, self) {
+      return self.renderToken(tokens, idx, opts);
+    };
+  md.renderer.rules.fence = (tokens, idx, opts, env, self) => {
+    const token = tokens[idx];
+    if (!token) return defaultFence(tokens, idx, opts, env, self);
+    const info = token.info.trim().toLowerCase();
+    if (info !== "carousel" && info !== "gallery") {
+      return defaultFence(tokens, idx, opts, env, self);
+    }
+    const slides: string[] = [];
+    for (const raw of token.content.split("\n")) {
+      const line = raw.trim();
+      if (!line) continue;
+      let src: string | null = null;
+      let alt = "";
+      const m = /^!\[([^\]]*)\]\(\s*(\S+?)(?:\s+"[^"]*")?\s*\)$/.exec(line);
+      if (m) {
+        alt = m[1]!;
+        src = m[2]!;
+      } else if (/^https?:\/\/\S+$/i.test(line)) {
+        src = line;
+      }
+      if (!src || !isSafeImgSrc(src)) continue;
+      slides.push(
+        `<div class="carousel-slide"><img src="${escapeHtml(src)}" alt="${escapeHtml(alt)}" loading="lazy" referrerpolicy="no-referrer" decoding="async"></div>`,
+      );
+    }
+    if (slides.length === 0) return defaultFence(tokens, idx, opts, env, self);
+    const line = token.attrGet("data-source-line");
+    const lineAttr = line ? ` data-source-line="${line}"` : "";
+    return `<div class="carousel"${lineAttr}><div class="carousel-track">${slides.join("")}</div></div>`;
+  };
+
   md.renderer.rules.image = (tokens, idx, _opts, _env, _self) => {
     const token = tokens[idx];
     if (!token) return "";
