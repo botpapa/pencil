@@ -78,10 +78,15 @@ let previewOpen = (() => {
   }
 })();
 
-// Save is enabled iff the current title/content differ from the last-saved
-// baseline. For new mode the baseline starts empty, so the first keystroke
-// enables save; clearing both fields disables it again.
+// Edit mode: save is always available — clicking (or Cmd/Ctrl-S) with no
+// changes simply re-saves and returns to the published page, which doubles as
+// the "exit edit mode" path. New mode: enabled once there's any input, so an
+// empty page can't be published.
 function syncSaveEnabled(): void {
+  if (mode === "edit") {
+    saveBtn!.disabled = false;
+    return;
+  }
   const changed =
     titleInput!.value !== lastSavedTitle || mdInput!.value !== lastSavedContent;
   saveBtn!.disabled = !changed;
@@ -1057,3 +1062,6 @@ panePreview?.addEventListener("scroll", () => {
 
 schedulePreview();
 autosizeMdInput();
+// The button ships disabled in the HTML; resolve its real state at boot
+// (edit mode enables immediately, new mode waits for input).
+syncSaveEnabled();
