@@ -100,3 +100,13 @@ export async function listDrawingsByOwner(db: D1Database, ownerId: string): Prom
     .all<DrawingSummary>();
   return results ?? [];
 }
+
+// Cheap indexed existence check (idx_drawings_owner) for the topbar
+// "my drawings" link — mirrors ownerHasPages on the text side.
+export async function ownerHasDrawings(db: D1Database, ownerId: string): Promise<boolean> {
+  const row = await db
+    .prepare("SELECT 1 AS one FROM drawings WHERE owner_id = ? LIMIT 1")
+    .bind(ownerId)
+    .first<{ one: number }>();
+  return row != null;
+}

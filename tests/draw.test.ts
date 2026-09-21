@@ -96,3 +96,45 @@ describe("draw — security", () => {
     expect(await locked.text()).not.toContain("classified");
   });
 });
+
+describe("draw — owner's drawings list", () => {
+  it("lists only the owner's drawings and links to /pages from the editor and reader", async () => {
+    const a = await create({ title: "Alpha board", scene: scene() });
+    expect(a.status).toBe(201);
+    const oc = cookie(a, "pencil_uid")!;
+    const aSlug = ((await a.json()) as { slug: string }).slug;
+    const b = await create({ title: "Beta board", scene: scene() }, oc);
+    expect(b.status).toBe(201);
+
+    const list = await SELF.fetch(`${DRAW}/pages`, { headers: { Cookie: oc } });
+    expect(list.status).toBe(200);
+    const html = await list.text();
+    expect(html).toContain("Alpha board");
+    expect(html).toContain("Beta board");
+    expect(html).toContain(`href="/${aSlug}/edit"`);
+
+    // Topbar link on the home editor and on the owner's reader.
+    const home = await SELF.fetch(`${DRAW}/`, { headers: { Cookie: oc } });
+    expect(await home.text()).toContain('href="/pages"');
+    const read = await SELF.fetch(`${DRAW}/${aSlug}`, { headers: { Cookie: oc } });
+    expect(await read.text()).toContain('href="/pages"');
+
+    // A different browser sees an empty list and no link.
+    const other = await SELF.fetch(`${DRAW}/pages`);
+    const otherHtml = await other.text();
+    expect(otherHtml).not.toContain("Alpha board");
+    expect(otherHtml).toContain("no drawings yet");
+    const otherHome = await SELF.fetch(`${DRAW}/`);
+    expect(await otherHome.text()).not.toContain('href="/pages"');
+  });
+
+  it("delete sends the owner back to the list", async () => {
+    const a = await create({ title: "Doomed", scene: scene() });
+    const oc = cookie(a, "pencil_uid")!;
+    const slug = ((await a.json()) as { slug: string }).slug;
+    const del = await SELF.fetch(`${DRAW}/${slug}/delete`, { method: "POST", headers: { Cookie: oc }, redirect: "manual" });
+    expect(del.status).toBe(303);
+    expect(del.headers.get("Location")).toBe("/pages");
+    expect((await SELF.fetch(`${DRAW}/${slug}`)).status).toBe(404);
+  });
+});

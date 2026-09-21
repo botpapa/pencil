@@ -54,6 +54,22 @@
 .draw-title--read { margin: 0; }
 .draw-actions { display: flex; gap: 0.5rem; align-items: center; }
 .draw-status { font-family: var(--font-mono); font-size: 11px; color: var(--ink-soft); }
+.draw-nav {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-soft);
+  text-decoration: none;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-right: 0.4rem;
+}
+.draw-nav:hover { color: var(--ink); }
+
+/* /pages — a normal scrolling document, not a canvas. Undo the fixed-height
+ * lock from .draw-body and reuse the .pages list styles from styles.css. */
+.draw-pages { height: auto; overflow: auto; }
+.draw-pages .app { min-height: 100vh; min-height: 100dvh; display: flex; flex-direction: column; }
+.draw-pages .main { flex: 1; }
 
 /* The canvas surface + the pan/zoom world inside it. */
 .canvas-root {

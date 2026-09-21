@@ -2,6 +2,8 @@
 // canvas, toolbar, and mode UI into #draw-root; the server only provides the
 // title field, the action buttons, and the initial scene JSON.
 
+import type { DrawingSummary } from "../types.js";
+
 function esc(s: string): string {
   return s
     .replaceAll("&", "&amp;")
@@ -21,6 +23,8 @@ type ShellOpts = {
   ogImage?: string;
   canonicalUrl?: string;
   isOwner?: boolean;
+  // Render the "my drawings" link in the topbar (owner has >= 1 drawing).
+  showListLink?: boolean;
 };
 
 function shell(opts: ShellOpts): string {
@@ -34,10 +38,15 @@ function shell(opts: ShellOpts): string {
     ? `<input class="draw-title" id="draw-title" type="text" maxlength="200" autocomplete="off" spellcheck="true" placeholder="title" value="${esc(opts.title)}" />`
     : `<h1 class="draw-title draw-title--read">${esc(titleText)}</h1>`;
 
+  // Same affordance as the text app's footer "my pages" link, but the canvas
+  // has no footer, so it lives in the topbar next to the actions.
+  const listLink = opts.showListLink ? `<a class="draw-nav" href="/pages">my drawings</a>` : "";
+
   // Owner of a published drawing sees an "edit" affordance; the editor itself
   // shows save.
   const actions = isEditor
     ? `<div class="draw-actions" id="draw-actions">
+         ${listLink}
          <span class="draw-status" id="draw-status" role="status" aria-live="polite"></span>
          <button class="btn" id="draw-reset" type="button">reset</button>
          <button class="btn btn--primary" id="draw-save" type="button">${opts.mode === "edit" ? "save" : "publish"}</button>
@@ -50,8 +59,10 @@ function shell(opts: ShellOpts): string {
          </div>
        </div>`
     : opts.isOwner && opts.slug
-      ? `<div class="draw-actions" id="draw-actions"><a class="btn btn--primary" href="/${esc(opts.slug)}/edit">edit</a></div>`
-      : "";
+      ? `<div class="draw-actions" id="draw-actions">${listLink}<a class="btn btn--primary" href="/${esc(opts.slug)}/edit">edit</a></div>`
+      : listLink
+        ? `<div class="draw-actions" id="draw-actions">${listLink}</div>`
+        : "";
 
   const data = `data-mode="${opts.mode}"${opts.slug ? ` data-slug="${esc(opts.slug)}"` : ""}`;
 
@@ -89,7 +100,13 @@ ${canonical}
 </html>`;
 }
 
-export function drawEditorPage(opts: { mode: "new" | "edit"; slug?: string; title: string; scene: string }): string {
+export function drawEditorPage(opts: {
+  mode: "new" | "edit";
+  slug?: string;
+  title: string;
+  scene: string;
+  showListLink?: boolean;
+}): string {
   return shell(opts);
 }
 
@@ -100,8 +117,48 @@ export function drawReaderPage(opts: {
   ogImage: string;
   canonicalUrl: string;
   isOwner: boolean;
+  showListLink?: boolean;
 }): string {
   return shell({ ...opts, mode: "read" });
+}
+
+// The owner's drawings — same list as pencil.md/pages, same markup and
+// classes (styles.css), so the two apps look alike.
+export function drawListPage(drawings: DrawingSummary[], pencilUrl: string): string {
+  const fmtDate = (ms: number) =>
+    new Date(ms).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" });
+  const rows = drawings
+    .map(
+      (d) => `<li class="page-row">
+          <a class="page-title" href="/${esc(d.slug)}">${esc(d.title || "untitled")}</a>
+          <span class="page-meta">${d.protected ? `<span class="lock" title="password protected">🔒</span> ` : ""}${fmtDate(d.created_at)} &middot; ${d.views.toLocaleString()} ${d.views === 1 ? "view" : "views"}</span>
+          <a class="page-edit" href="/${esc(d.slug)}/edit">edit</a>
+        </li>`,
+    )
+    .join("");
+  const list = drawings.length
+    ? `<ul class="pages-list">${rows}</ul>`
+    : `<p class="placeholder" style="margin-top:2rem"><em>no drawings yet. <a href="/">draw one</a>.</em></p>`;
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>your drawings — draw.pencil.md</title>
+<meta name="robots" content="noindex,nofollow">
+<link rel="stylesheet" href="/styles.css"><link rel="stylesheet" href="/draw.css">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml"></head>
+<body class="draw-body draw-pages">
+<div class="app">
+<main class="main">
+<section class="pages">
+  <h1 class="pages-heading">your drawings</h1>
+  <p class="label">stored on this browser &middot; <a href="/">new drawing</a></p>
+  ${list}
+</section>
+</main>
+<footer class="footer">
+<a href="${esc(pencilUrl)}">pencil.md</a> &middot; <a href="${esc(pencilUrl)}/pages">my pages</a>
+</footer>
+</div>
+</body></html>`;
 }
 
 export function drawNotFound(): string {

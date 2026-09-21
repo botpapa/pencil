@@ -21,11 +21,13 @@ import {
   deleteDrawing,
   incrementDrawingViews,
   setDrawingPassword,
+  listDrawingsByOwner,
+  ownerHasDrawings,
 } from "../lib/drawdb.js";
 import { isValidSlug, newSlug } from "../lib/slug.js";
 import { rejectIfOversize } from "../lib/limits.js";
 import { bytesOf, originUrl, normalizeTitle, validateTitleField } from "../lib/http.js";
-import { drawEditorPage, drawReaderPage, drawNotFound } from "../views/draw.js";
+import { drawEditorPage, drawReaderPage, drawListPage, drawNotFound } from "../views/draw.js";
 import {
   MAX_SCENE_BYTES,
   MAX_IMAGE_BYTES,
@@ -110,8 +112,25 @@ async function canView(
 
 app.get("/", async (c) => {
   await ensureOwnerCookie(c);
-  return c.html(drawEditorPage({ mode: "new", title: "", scene: EMPTY_SCENE }));
+  const showListLink = await ownerHasDrawings(c.env.DB, c.get("ownerId"));
+  return c.html(drawEditorPage({ mode: "new", title: "", scene: EMPTY_SCENE, showListLink }));
 });
+
+// The owner's drawings (this browser's cookie) — the draw twin of
+// pencil.md/pages. Registered before "/:slug" so the reader doesn't swallow it.
+app.get("/pages", async (c) => {
+  await ensureOwnerCookie(c);
+  const drawings = await listDrawingsByOwner(c.env.DB, c.get("ownerId"));
+  return c.html(drawListPage(drawings, pencilUrl(c)));
+});
+
+// URL of the text app for the current host: draw.pencil.md → https://pencil.md,
+// draw.localhost:8787 → http://localhost:8787.
+function pencilUrl(c: { req: { url: string } }): string {
+  const u = new URL(c.req.url);
+  const host = u.host.replace(/^draw\./, "");
+  return `${u.protocol}//${host}`;
+}
 
 // ---------- create ----------
 
@@ -193,6 +212,7 @@ app.get("/:slug", async (c) => {
       ogImage: `${originUrl(c)}/og/${slug}.png`,
       canonicalUrl: `${originUrl(c)}/${slug}`,
       isOwner,
+      showListLink: isOwner || (await ownerHasDrawings(c.env.DB, ownerId)),
     }),
   );
 });
@@ -206,7 +226,8 @@ app.get("/:slug/edit", async (c) => {
   if (!d) return c.html(drawNotFound(), 404);
   await ensureOwnerCookie(c);
   if (d.owner_id !== c.get("ownerId")) return c.redirect(`/${slug}`, 303);
-  return c.html(drawEditorPage({ mode: "edit", slug, title: d.title, scene: d.scene }));
+  // The owner is editing one of their own drawings, so the list is non-empty.
+  return c.html(drawEditorPage({ mode: "edit", slug, title: d.title, scene: d.scene, showListLink: true }));
 });
 
 // ---------- update ----------
@@ -259,7 +280,7 @@ app.post("/:slug/delete", async (c) => {
   if (d.owner_id !== c.get("ownerId")) return c.text("forbidden", 403);
   await deleteDrawing(c.env.DB, slug);
   bustThumb(c, d.thumb_key);
-  return c.redirect(`/`, 303);
+  return c.redirect(`/pages`, 303);
 });
 
 // ---------- password ----------

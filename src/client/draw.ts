@@ -1314,7 +1314,7 @@ function buildUI(): void {
     root.classList.remove("mode-draw");
     root.classList.add("mode-select");
     // "Bring me back to the content" — shown only when the content is off-screen.
-    editLink = document.querySelector<HTMLAnchorElement>(".draw-actions a");
+    editLink = document.querySelector<HTMLAnchorElement>(".draw-actions a.btn");
     backBtn = document.createElement("button");
     backBtn.className = "back-to-content";
     backBtn.type = "button";
