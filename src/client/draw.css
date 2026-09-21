@@ -54,16 +54,24 @@
 .draw-title--read { margin: 0; }
 .draw-actions { display: flex; gap: 0.5rem; align-items: center; }
 .draw-status { font-family: var(--font-mono); font-size: 11px; color: var(--ink-soft); }
-.draw-nav {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--ink-soft);
+/* Icon-only "profile" button → /pages (the owner's drawings). Matches .btn
+ * sizing/colours but is square and carries no text. */
+.draw-profile {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.1rem;
+  height: 2.1rem;
+  background: var(--bg-soft);
+  border: var(--rule-w) solid var(--rule);
+  border-radius: 2px;
+  color: var(--ink);
   text-decoration: none;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  margin-right: 0.4rem;
+  transition: border-color 80ms linear, background 80ms linear;
 }
-.draw-nav:hover { color: var(--ink); }
+.draw-profile:hover { border-color: var(--ink-soft); }
+.draw-profile:active { background: var(--rule); }
+.draw-profile svg { display: block; }
 
 /* /pages — a normal scrolling document, not a canvas. Undo the fixed-height
  * lock from .draw-body and reuse the .pages list styles from styles.css. */

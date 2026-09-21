@@ -15,6 +15,8 @@ function esc(s: string): string {
 
 type Mode = "new" | "edit" | "read";
 
+const PERSON_ICON = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-6.5 8-6.5s8 2.5 8 6.5"/></svg>`;
+
 type ShellOpts = {
   mode: Mode;
   slug?: string;
@@ -39,17 +41,21 @@ function shell(opts: ShellOpts): string {
     : `<h1 class="draw-title draw-title--read">${esc(titleText)}</h1>`;
 
   // Same affordance as the text app's footer "my pages" link, but the canvas
-  // has no footer, so it lives in the topbar next to the actions.
-  const listLink = opts.showListLink ? `<a class="draw-nav" href="/pages">my drawings</a>` : "";
+  // has no footer, so it's an icon-only "profile" button in the topbar next to
+  // save/edit. Deliberately NOT a .btn — the client finds the reader's edit
+  // button via ".draw-actions a.btn".
+  const listLink = opts.showListLink
+    ? `<a class="draw-profile" href="/pages" title="my drawings" aria-label="my drawings">${PERSON_ICON}</a>`
+    : "";
 
   // Owner of a published drawing sees an "edit" affordance; the editor itself
   // shows save.
   const actions = isEditor
     ? `<div class="draw-actions" id="draw-actions">
-         ${listLink}
          <span class="draw-status" id="draw-status" role="status" aria-live="polite"></span>
          <button class="btn" id="draw-reset" type="button">reset</button>
          <button class="btn btn--primary" id="draw-save" type="button">${opts.mode === "edit" ? "save" : "publish"}</button>
+         ${listLink}
        </div>
        <div class="reset-confirm" id="reset-confirm" role="dialog" aria-label="Reset canvas" hidden>
          <p class="reset-confirm-q">Clear the canvas? This permanently removes everything on it.</p>
@@ -59,7 +65,7 @@ function shell(opts: ShellOpts): string {
          </div>
        </div>`
     : opts.isOwner && opts.slug
-      ? `<div class="draw-actions" id="draw-actions">${listLink}<a class="btn btn--primary" href="/${esc(opts.slug)}/edit">edit</a></div>`
+      ? `<div class="draw-actions" id="draw-actions"><a class="btn btn--primary" href="/${esc(opts.slug)}/edit">edit</a>${listLink}</div>`
       : listLink
         ? `<div class="draw-actions" id="draw-actions">${listLink}</div>`
         : "";
