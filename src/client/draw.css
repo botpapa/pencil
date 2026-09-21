@@ -60,8 +60,13 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 2.1rem;
-  height: 2.1rem;
+  /* Stretch to the row so it is exactly as tall as the save/edit .btn beside
+   * it, whatever the font/padding of that button; keep it square. */
+  align-self: stretch;
+  aspect-ratio: 1;
+  height: auto;
+  padding: 0;
+  box-sizing: border-box;
   background: var(--bg-soft);
   border: var(--rule-w) solid var(--rule);
   border-radius: 2px;
