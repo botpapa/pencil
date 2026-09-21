@@ -60,13 +60,16 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  /* Stretch to the row so it is exactly as tall as the save/edit .btn beside
-   * it, whatever the font/padding of that button; keep it square. */
+  /* Exactly the .btn box: same font-size, inherited line-height, same vertical
+   * padding and border → same height; width follows via aspect-ratio. The
+   * stretch is a fallback for browsers without the `lh` unit. */
   align-self: stretch;
-  aspect-ratio: 1;
-  height: auto;
-  padding: 0;
+  font-size: 13px;
+  line-height: inherit;
   box-sizing: border-box;
+  padding: 0;
+  height: calc(1lh + 0.9rem + 2 * var(--rule-w));
+  width: calc(1lh + 0.9rem + 2 * var(--rule-w));
   background: var(--bg-soft);
   border: var(--rule-w) solid var(--rule);
   border-radius: 2px;
