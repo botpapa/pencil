@@ -84,6 +84,39 @@ Layout rules agents must account for (there is **no auto-layout**):
 - `thumb` (optional) is a `data:image/png;base64,…` used as the share/OG image;
   the editor renders it from the canvas, so it mirrors heading scaling and fills.
 
+## Claude & ChatGPT connector (MCP)
+
+The Worker also serves an **MCP server** at `/mcp` so Claude, ChatGPT and any
+other MCP client can publish and edit pages and drawings on the user's behalf.
+Users add it from `/connect`; the server handles OAuth 2.1 itself (PKCE S256,
+client-ID metadata documents, dynamic registration, refresh-token rotation,
+revocation) and binds the issued tokens to the approving browser's
+`pencil_uid` identity — no account system is introduced.
+
+```text
+POST /mcp                                   Streamable HTTP, stateless, dual-era (2026-07-28 + legacy initialize)
+GET  /.well-known/oauth-protected-resource[/mcp]
+GET  /.well-known/oauth-authorization-server
+POST /oauth/register    GET|POST /oauth/authorize    POST /oauth/token    POST /oauth/revoke
+GET|POST /connect/claim/:code               one-time "sign this browser in" link
+GET  /connect  /privacy  /terms             landing + legal pages the directories require
+```
+
+Tools: `create_page`, `get_page`, `update_page`, `list_pages`,
+`set_page_options`, `delete_page`, `upload_image`, `create_drawing`,
+`get_drawing`, `update_drawing`, `list_drawings`, `set_drawing_options`,
+`delete_drawing`, `get_browser_login_link`. Read tools carry
+`readOnlyHint`, write tools `destructiveHint`, so hosts confirm the latter.
+
+Self-hosters: run migration `0006_oauth.sql` (`npm run db:migrate`). To list in
+the ChatGPT plugin directory set the `OPENAI_APPS_CHALLENGE` var to the token
+from the OpenAI portal; it is served at `/.well-known/openai-apps-challenge`.
+The directory submission kit (listing copy, plugin manifest, test cases) lives
+in [`docs/connector/`](./docs/connector/).
+
+Recommended edge rate limit (in addition to the table below): `/oauth/*`
+POST — 50 requests / 10 s / IP.
+
 ## Self-Host In 5 Minutes
 
 You need a Cloudflare account, Node 20+, and `wrangler` through npm.

@@ -7,6 +7,9 @@ import api from "./routes/api.js";
 import stats from "./routes/stats.js";
 import og from "./routes/og.js";
 import draw from "./routes/draw.js";
+import oauth from "./routes/oauth.js";
+import mcp from "./routes/mcp.js";
+import { connectPage, privacyPage, termsPage } from "./views/connect.js";
 import { docsPage } from "./views/docs.js";
 import { aboutPage } from "./views/about.js";
 import { notFoundPage } from "./views/stats.js";
@@ -51,6 +54,37 @@ app.get("/about", async (c) => {
   return c.html(aboutPage(new URL(c.req.url).origin, hasPages));
 });
 
+// Connector landing + legal pages (required by the Claude / ChatGPT directories).
+app.get("/connect", async (c) => {
+  await ensureOwnerCookie(c);
+  const hasPages = await ownerHasPages(c.env.DB, c.get("ownerId"));
+  return c.html(connectPage(new URL(c.req.url).origin, hasPages));
+});
+app.get("/privacy", async (c) => {
+  await ensureOwnerCookie(c);
+  const hasPages = await ownerHasPages(c.env.DB, c.get("ownerId"));
+  return c.html(privacyPage(new URL(c.req.url).origin, hasPages));
+});
+app.get("/terms", async (c) => {
+  await ensureOwnerCookie(c);
+  const hasPages = await ownerHasPages(c.env.DB, c.get("ownerId"));
+  return c.html(termsPage(new URL(c.req.url).origin, hasPages));
+});
+
+// ChatGPT plugin directory domain verification: the portal issues a token
+// that must be served as plain text at this path. Set OPENAI_APPS_CHALLENGE
+// as a Worker var/secret; 404 until then.
+app.get("/.well-known/openai-apps-challenge", (c) => {
+  const token = c.env.OPENAI_APPS_CHALLENGE;
+  if (!token) return c.text("not found", 404);
+  return c.text(token, 200, { "Content-Type": "text/plain; charset=utf-8" });
+});
+
+// OAuth 2.1 authorization server + discovery documents, and the MCP endpoint
+// used by the Claude connector / ChatGPT plugin.
+app.route("/", oauth);
+app.route("/", mcp);
+
 // Public agent API.
 app.route("/api/v1", api);
 
@@ -66,7 +100,7 @@ app.route("/", pages);
 app.notFound((c) => {
   // JSON 404 for /api/* paths; HTML 404 for everything else.
   const url = new URL(c.req.url);
-  if (url.pathname.startsWith("/api")) {
+  if (url.pathname.startsWith("/api") || url.pathname.startsWith("/oauth") || url.pathname === "/mcp") {
     return c.json({ error: "not found" }, 404);
   }
   return c.html(notFoundPage(), 404);
@@ -80,7 +114,7 @@ app.onError((err, c) => {
     message: err instanceof Error ? err.message : String(err),
   });
   const url = new URL(c.req.url);
-  if (url.pathname.startsWith("/api")) {
+  if (url.pathname.startsWith("/api") || url.pathname.startsWith("/oauth") || url.pathname === "/mcp") {
     return c.json({ error: "internal error" }, 500);
   }
   // HTML 500 — distinct from 404 so users can tell the difference.

@@ -186,6 +186,19 @@ curl -X POST https://draw.pencil.md/ \\
 non-owners). Editing, image upload, and password-protection work the same way
 as markdown pages, scoped to the \`draw.\` host.
 
+## MCP connector (Claude, ChatGPT, any MCP client)
+
+Prefer tools over raw HTTP? The same service is exposed as an **MCP server**
+at \`https://YOUR-DEPLOYMENT/mcp\` (Streamable HTTP, OAuth 2.1 with PKCE,
+client-ID metadata documents and dynamic registration). Tools: \`create_page\`,
+\`get_page\`, \`update_page\`, \`list_pages\`, \`set_page_options\`, \`delete_page\`,
+\`upload_image\`, \`create_drawing\`, \`get_drawing\`, \`update_drawing\`,
+\`list_drawings\`, \`set_drawing_options\`, \`delete_drawing\`,
+\`get_browser_login_link\`. Everything an assistant publishes belongs to the
+browser identity that approved the connection, so you can keep editing by hand.
+
+Setup instructions: [https://YOUR-DEPLOYMENT/connect](https://YOUR-DEPLOYMENT/connect).
+
 ## Notes for AI agents
 
 - Save the \`edit_token\` returned by \`POST /pages\` if you want to edit that

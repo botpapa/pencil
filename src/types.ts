@@ -5,6 +5,9 @@ export type Bindings = {
   ASSETS: Fetcher;
   COOKIE_SECRET: string;
   APP_NAME: string;
+  // Optional: ChatGPT plugin directory domain-verification token, served at
+  // /.well-known/openai-apps-challenge.
+  OPENAI_APPS_CHALLENGE?: string;
 };
 
 export type Variables = {

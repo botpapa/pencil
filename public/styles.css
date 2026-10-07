@@ -1080,3 +1080,34 @@ summary.row::-webkit-details-marker { display: none; }
   color: var(--danger);
   margin-top: 1rem;
 }
+
+/* ---------- connector consent / sign-in ---------- */
+.consent {
+  max-width: 34rem;
+  margin: 3rem auto;
+  padding: 0 1rem;
+}
+.consent-heading {
+  font-family: var(--font-serif);
+  font-weight: 600;
+  font-size: 1.6rem;
+  line-height: 1.25;
+  margin: 0.4rem 0 1rem;
+}
+.consent-heading strong { font-weight: 700; }
+.consent-sub { margin: 0 0 0.4rem; color: var(--ink-soft); }
+.consent-scopes { margin: 0 0 1.2rem 1.2rem; padding: 0; }
+.consent-scopes li { margin: 0.3rem 0; }
+.consent-note {
+  color: var(--ink-soft);
+  font-size: 0.95rem;
+  line-height: 1.5;
+  margin: 0.6rem 0;
+}
+.consent-note code { font-family: var(--font-mono); font-size: 0.85em; }
+.consent-form {
+  display: flex;
+  gap: 0.6rem;
+  margin-top: 1.6rem;
+  flex-wrap: wrap;
+}

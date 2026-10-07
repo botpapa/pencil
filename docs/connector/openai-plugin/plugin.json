@@ -1,0 +1,39 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "pencil-md",
+  "version": "1.0.0",
+  "description": "Publish markdown pages and canvas drawings to pencil.md, share the links, and keep editing them from the chat.",
+  "author": {
+    "name": "pencil.md",
+    "email": "hello@pencil.md",
+    "url": "https://pencil.md"
+  },
+  "homepage": "https://pencil.md/connect",
+  "repository": "https://github.com/botpapa/pencil",
+  "license": "MIT",
+  "keywords": ["markdown", "publishing", "notes", "drawing", "canvas", "share"],
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "pencil.md",
+        "shortDescription": "Publish markdown pages & drawings",
+        "longDescription": "pencil.md turns markdown into a shareable page in one step, with no signup. With this plugin ChatGPT can publish what you are working on as a clean, readable page (pencil.md/abc12345), send you the link, and edit the page later when you ask for changes. It can also upload images, build drawings on the infinite canvas at draw.pencil.md (live-markdown text, shapes, arrows, freehand strokes, images), list everything you have published, password-protect pages, and hand you a one-time link that signs any browser in so you can edit the same pages by hand.\n\nEverything the plugin publishes belongs to your anonymous pencil.md identity — there are no accounts, no tracking and no ads. Pages are public to anyone with the link unless you protect them with a password. Disconnect the plugin at any time to revoke its access; your pages stay online until you delete them.",
+        "developerName": "pencil.md",
+        "category": "Productivity",
+        "capabilities": ["Read", "Write"],
+        "websiteURL": "https://pencil.md/connect",
+        "privacyPolicyURL": "https://pencil.md/privacy",
+        "termsOfServiceURL": "https://pencil.md/terms",
+        "defaultPrompt": [
+          "Publish these notes to pencil.md and give me the link.",
+          "Turn this conversation into a pencil.md page with headings and a summary.",
+          "Make a pencil.md drawing of this architecture with boxes and arrows.",
+          "Update my pencil.md page about the launch plan with the new dates."
+        ],
+        "brandColor": "#F4B400",
+        "composerIcon": "./assets/icon.png",
+        "logo": "./assets/logo.png"
+      }
+    }
+  }
+}
