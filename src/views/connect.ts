@@ -50,6 +50,24 @@ export function consentPage(p: {
   });
 }
 
+// Shown after allow/deny instead of an HTTP 302: the consent page's CSP has
+// `form-action 'self'`, and Chrome applies form-action to redirects that
+// follow a form submission, so a 302 to claude.ai / chatgpt.com would be
+// blocked. A meta refresh is not subject to form-action.
+export function redirectPage(url: string, clientName: string, allowed: boolean): string {
+  const body = html`
+    <section class="consent">
+      <p class="label">connect to pencil.md</p>
+      <h1 class="consent-heading">${allowed ? `Returning you to ${clientName}…` : "Access denied"}</h1>
+      <p class="consent-note">If nothing happens, <a id="continue" href="${url}">continue to ${clientName}</a>.</p>
+    </section>
+  `;
+  return layout({ title: `Connecting — pencil.md`, bodyClass: "page-consent", body: raw(body), noIndex: true }).replace(
+    "</head>",
+    `<meta http-equiv="refresh" content="0;url=${url.replaceAll("&", "&amp;").replaceAll('"', "&quot;")}"></head>`,
+  );
+}
+
 export function consentErrorPage(heading: string, message: string): string {
   const body = html`
     <section class="consent">

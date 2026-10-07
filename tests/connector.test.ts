@@ -56,8 +56,13 @@ async function consent(client_id: string, opts: { scope?: string; cookie?: strin
     body: new URLSearchParams({ txn, action: opts.action ?? "allow" }),
     redirect: "manual",
   });
-  expect(post.status).toBe(302);
-  const loc = new URL(post.headers.get("Location")!);
+  // 200 + meta refresh (not a 302): CSP form-action would block a cross-origin redirect.
+  expect(post.status).toBe(200);
+  const done = await post.text();
+  const refresh = /<meta http-equiv="refresh" content="0;url=([^"]+)">/.exec(done)![1]!;
+  const href = /<a id="continue" href="([^"]+)">/.exec(done)![1]!;
+  expect(refresh).toBe(href);
+  const loc = new URL(href.replaceAll("&amp;", "&"));
   return { loc, cookie };
 }
 

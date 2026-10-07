@@ -38,7 +38,7 @@ import {
   peekLoginLink,
   b64url,
 } from "../lib/oauth.js";
-import { consentPage, consentErrorPage, claimPage } from "../views/connect.js";
+import { consentPage, consentErrorPage, claimPage, redirectPage } from "../views/connect.js";
 import type { AppEnv } from "../types.js";
 
 const app = new Hono<AppEnv>();
@@ -219,10 +219,12 @@ app.post("/oauth/authorize", async (c) => {
   const u = new URL(req.redirect_uri);
   u.searchParams.set("iss", originUrl(c)); // RFC 9207
   if (req.state) u.searchParams.set("state", req.state);
+  const client = await resolveClient(c.env.DB, req.client_id);
+  const clientName = client?.client_name ?? "the app";
   if (form.get("action") !== "allow") {
     u.searchParams.set("error", "access_denied");
     u.searchParams.set("error_description", "the user declined");
-    return c.redirect(u.toString(), 302);
+    return c.html(redirectPage(u.toString(), clientName, false), 200, noStore);
   }
   const code = await issueCode(c.env.DB, {
     client_id: req.client_id,
@@ -233,7 +235,8 @@ app.post("/oauth/authorize", async (c) => {
     resource: req.resource,
   });
   u.searchParams.set("code", code);
-  return c.redirect(u.toString(), 302);
+  // 200 + meta refresh rather than 302 — see redirectPage().
+  return c.html(redirectPage(u.toString(), clientName, true), 200, noStore);
 });
 
 // ---------- token ----------
