@@ -56,6 +56,15 @@ describe("telegram instant view bait page", () => {
 });
 
 describe("toInstantViewHtml", () => {
+  it("flattens nested lists with level markers", () => {
+    const md = "- a\n  - b\n    - c\n  - d\n- e\n\n1. one\n   1. sub one\n   2. sub two\n2. two";
+    const out = toInstantViewHtml(renderMarkdown(md)).replace(/\s+/g, "");
+    expect(out).toContain("<li>a</li><li>—b</li><li>——c</li><li>—d</li><li>e</li>");
+    expect(out).toContain("<li>one</li><li>—1.subone</li><li>—2.subtwo</li><li>two</li>");
+    expect(out.match(/<ul>/g)?.length).toBe(1);
+    expect(out.match(/<ol>/g)?.length).toBe(1);
+  });
+
   it("reshapes reader markup for the teletype template", () => {
     const md = [
       "# T",

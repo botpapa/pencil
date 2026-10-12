@@ -59,6 +59,22 @@ export function toInstantViewHtml(src: string): string {
   // Task-list checkboxes → text marks.
   h = h.replace(/<input type="checkbox" disabled="disabled" checked="checked" \/>/g, "☑");
   h = h.replace(/<input type="checkbox" disabled="disabled" \/>/g, "☐");
+  // Nested lists: teletype's template flattens them, so nesting silently
+  // disappears. Flatten them ourselves instead, marking each level with "— "
+  // (and a number for nested ordered lists) so the hierarchy stays readable.
+  // Innermost lists go first; deeper levels accumulate one marker per level.
+  for (let guard = 0; guard < 20; guard++) {
+    const before = h;
+    h = h.replace(
+      /\s*<(ul|ol)>((?:(?!<ul>|<ol>)[\s\S])*?)<\/\1>\s*<\/li>/g,
+      (_m, tag: string, inner: string) => {
+        let n = 0;
+        const items = inner.replace(/<li>/g, () => `<li>— ${tag === "ol" ? `${++n}. ` : ""}`);
+        return `</li>${items.trim()}`;
+      },
+    );
+    if (h === before) break;
+  }
   // Footnote back-arrows are noise without in-page navigation.
   h = h.replace(/\s*<a href="#fnref\d+" class="footnote-backref">↩︎<\/a>/g, "");
   return h;
