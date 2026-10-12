@@ -12,7 +12,7 @@ import { hashPassword, verifyPassword } from "./password.js";
 import { validateScene } from "./scene.js";
 import { ingestImage, storeImage } from "./image.js";
 import { issueLoginLink, hasScope, LOGIN_LINK_TTL_MS, type Principal } from "./oauth.js";
-import { bytesOf, normalizeTitle } from "./http.js";
+import { bytesOf, normalizeTitle, telegramIvUrl } from "./http.js";
 import { drawUrl } from "../views/layout.js";
 import { MAX_CONTENT_BYTES, MAX_TITLE_LENGTH, MAX_PASSWORD_LENGTH, MAX_SCENE_BYTES } from "../types.js";
 import type { Bindings } from "../types.js";
@@ -25,7 +25,7 @@ export const PROTOCOL_VERSION_META = "io.modelcontextprotocol/protocolVersion";
 
 export const INSTRUCTIONS = `pencil.md publishes markdown pages (pencil.md/<slug>) and infinite-canvas drawings (draw.pencil.md/<slug>) and returns shareable links. There are no accounts: everything you publish belongs to the user's pencil.md browser identity, so the user can also open "my pages" on pencil.md and edit by hand.
 
-Workflow: create_page → share the returned url. To change it later, call update_page with the slug. Use list_pages / list_drawings to find things you or the user published earlier. Use upload_image to host an image, then reference the returned markdown_url in a page or the returned canvas_url in a drawing image element. Drawings have NO auto-layout: you place every element at absolute coordinates; text never wraps (insert \\n yourself); a '# heading' at fontSize F is about 1.9×F tall per line, '##' 1.5×, '###' 1.25×, with 1.5× line height. Keep pages under 512 KB and images under 5 MB. Pages are public to anyone with the link unless password-protected. When the user wants to edit agent-made pages on another device, call get_browser_login_link and give them the link.`;
+Workflow: create_page → share the returned url (or telegram_url when the user will post the link in Telegram: it opens as Instant View). To change it later, call update_page with the slug. Use list_pages / list_drawings to find things you or the user published earlier. Use upload_image to host an image, then reference the returned markdown_url in a page or the returned canvas_url in a drawing image element. Drawings have NO auto-layout: you place every element at absolute coordinates; text never wraps (insert \\n yourself); a '# heading' at fontSize F is about 1.9×F tall per line, '##' 1.5×, '###' 1.25×, with 1.5× line height. Keep pages under 512 KB and images under 5 MB. Pages are public to anyone with the link unless password-protected. When the user wants to edit agent-made pages on another device, call get_browser_login_link and give them the link.`;
 
 // ---------- JSON-RPC types ----------
 
@@ -223,7 +223,11 @@ const VIEWPORT_SCHEMA: JsonSchema = {
 // ---------- tools ----------
 
 function pageResult(ctx: ToolContext, slug: string, extra: Record<string, unknown> = {}) {
-  return { slug, url: `${ctx.origin}/${slug}`, edit_url: `${ctx.origin}/${slug}/edit`, ...extra };
+  const url = `${ctx.origin}/${slug}`;
+  // Telegram Instant View link (see docs/telegram-instant-view.md); only for
+  // public pages and only when the template hash is configured.
+  const telegram_url = extra.protected === true ? null : telegramIvUrl(url, ctx.env.TELEGRAM_IV_RHASH);
+  return { slug, url, edit_url: `${url}/edit`, ...(telegram_url ? { telegram_url } : {}), ...extra };
 }
 function drawingResult(ctx: ToolContext, slug: string, extra: Record<string, unknown> = {}) {
   return { slug, url: `${ctx.drawOrigin}/${slug}`, edit_url: `${ctx.drawOrigin}/${slug}/edit`, ...extra };
@@ -251,7 +255,7 @@ export const TOOLS: ToolDef[] = [
     name: "create_page",
     title: "Publish a markdown page",
     description:
-      "Publish markdown as a public page on pencil.md and get a shareable link. Supports GitHub-flavoured markdown, tables, task lists, footnotes, syntax-highlighted code, images (![alt](url)) and ```carousel fences containing image URLs for a swipeable gallery. Returns the url to share and the slug for later edits. Set password to restrict viewing.",
+      "Publish markdown as a public page on pencil.md and get a shareable link. Supports GitHub-flavoured markdown, tables, task lists, footnotes, syntax-highlighted code, images (![alt](url)) and ```carousel fences containing image URLs for a swipeable gallery. Returns the url to share, the slug for later edits and (when configured) telegram_url — a link that opens as Telegram Instant View. Set password to restrict viewing.",
     inputSchema: {
       type: "object",
       properties: {
@@ -275,7 +279,7 @@ export const TOOLS: ToolDef[] = [
         password_hash: password ? await hashPassword(password) : null,
       });
       const data = pageResult(ctx, slug, { title, protected: Boolean(password) });
-      return { text: `Published "${title || slug}" at ${data.url}${password ? " (password protected)" : ""}. Slug: ${slug}.`, data };
+      return { text: `Published "${title || slug}" at ${data.url}${password ? " (password protected)" : ""}. Slug: ${slug}.${data.telegram_url ? ` Telegram Instant View link: ${data.telegram_url}` : ""}`, data };
     },
   },
   {
@@ -341,7 +345,7 @@ export const TOOLS: ToolDef[] = [
       if (patch.title === undefined && patch.content === undefined) throw new ToolError("pass title and/or content");
       const updatedAt = await updatePage(ctx.env.DB, slug, patch);
       bustOg(ctx, slug);
-      const data = pageResult(ctx, slug, { updated_at: fmtDate(updatedAt) });
+      const data = pageResult(ctx, slug, { updated_at: fmtDate(updatedAt), protected: (await getPage(ctx.env.DB, slug))?.password_hash != null });
       return { text: `Updated ${data.url}.`, data };
     },
   },
@@ -354,7 +358,7 @@ export const TOOLS: ToolDef[] = [
     scope: "read",
     async handler(_args, ctx) {
       const rows = await listPagesByOwner(ctx.env.DB, ctx.principal.owner_id);
-      const pages = rows.map((r) => ({ slug: r.slug, title: r.title, url: `${ctx.origin}/${r.slug}`, edit_url: `${ctx.origin}/${r.slug}/edit`, views: r.views, protected: Boolean(r.protected), created_at: fmtDate(r.created_at), updated_at: fmtDate(r.updated_at) }));
+      const pages = rows.map((r) => ({ ...pageResult(ctx, r.slug, { protected: Boolean(r.protected) }), title: r.title, views: r.views, protected: Boolean(r.protected), created_at: fmtDate(r.created_at), updated_at: fmtDate(r.updated_at) }));
       const text = pages.length === 0 ? "No pages yet." : pages.map((p) => `- ${p.title || "(untitled)"} — ${p.url}${p.protected ? " 🔒" : ""} (${p.views} views, updated ${p.updated_at.slice(0, 10)})`).join("\n");
       return { text, data: { pages } };
     },

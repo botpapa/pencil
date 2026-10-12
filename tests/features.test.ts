@@ -191,3 +191,11 @@ describe("password protection — web", () => {
     expect((await SELF.fetch(`https://x/${slug}`)).status).toBe(200);
   });
 });
+
+describe("telegram instant view", () => {
+  it("has no /tg link and no telegram_url without TELEGRAM_IV_RHASH", async () => {
+    const { slug } = await createPage({ title: "IV", content: "# hi" });
+    const res = await SELF.fetch(`https://x/${slug}/tg`, { redirect: "manual" });
+    expect(res.status).toBe(404);
+  });
+});

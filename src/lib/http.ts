@@ -13,6 +13,17 @@ export function originUrl(c: { req: { url: string } }): string {
   return new URL(c.req.url).origin;
 }
 
+// Telegram Instant View link for a page: works for any template hash straight
+// from the IV editor, no approval needed. Returns null when not configured.
+export function telegramIvUrl(pageUrl: string, rhash: string | undefined): string | null {
+  const h = (rhash ?? "").trim();
+  if (!/^[0-9a-f]{6,64}$/i.test(h)) return null;
+  const u = new URL("https://t.me/iv");
+  u.searchParams.set("url", pageUrl);
+  u.searchParams.set("rhash", h);
+  return u.toString();
+}
+
 export function normalizeTitle(s: string): string {
   return s.trim().slice(0, MAX_TITLE_LENGTH);
 }

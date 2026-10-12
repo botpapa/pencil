@@ -7,12 +7,14 @@ export type StatsViewOpts = {
   createdAt: number;
   indexable: boolean;
   protected: boolean;
+  // t.me/iv link (Instant View), null when not configured / page protected.
+  telegramUrl?: string | null;
   showPagesLink?: boolean;
   host?: string;
 };
 
 export function statsPage(opts: StatsViewOpts): string {
-  const { slug, title, views, createdAt, indexable, protected: isProtected } = opts;
+  const { slug, title, views, createdAt, indexable, protected: isProtected, telegramUrl } = opts;
 
   // Indexing — a direct inline toggle. Protected pages are noindex by force, so
   // we just state that instead of offering the toggle.
@@ -82,6 +84,24 @@ export function statsPage(opts: StatsViewOpts): string {
         </details>
       `;
 
+  // Telegram Instant View link — only when the worker has a template hash and
+  // the page is public. Shown as a copyable field, not a toggle: there's
+  // nothing to switch, the link just exists.
+  const telegram = telegramUrl
+    ? html`
+        <details class="setting">
+          <summary class="row">
+            <span class="k">telegram instant view</span>
+            <span class="v"><span class="state on">on</span><span class="setting-action">get link</span></span>
+          </summary>
+          <div class="row-reveal">
+            <p class="row-note">share this link in Telegram and the page opens as Instant View</p>
+            <input type="text" class="pw-input" readonly value="${telegramUrl}" aria-label="telegram instant view link" onfocus="this.select()" />
+          </div>
+        </details>
+      `
+    : "";
+
   const body = html`
     <section class="stats">
       <p class="number">${String(views.toLocaleString())}</p>
@@ -91,6 +111,7 @@ export function statsPage(opts: StatsViewOpts): string {
       <div class="settings">
         ${raw(indexing)}
         ${raw(password)}
+        ${raw(telegram)}
 
         <details class="setting">
           <summary class="row">

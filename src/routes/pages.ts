@@ -39,6 +39,7 @@ import {
   normalizeTitle,
   validateTitleField,
   validateContentField,
+  telegramIvUrl,
 } from "../lib/http.js";
 import { homePage } from "../views/home.js";
 import { editorPage } from "../views/editor.js";
@@ -219,6 +220,19 @@ app.get("/:slug", async (c) => {
       host: c.req.header("host"),
     }),
   );
+});
+
+// Telegram Instant View: redirect to the t.me/iv link for this page. 404 when
+// the rhash isn't configured or the page is password protected (Telegram's
+// fetcher can't get past the unlock screen, so IV would show nothing useful).
+app.get("/:slug/tg", async (c) => {
+  const slug = c.req.param("slug");
+  if (!isValidSlug(slug)) return c.html(notFoundPage(), 404);
+  const page = await getPage(c.env.DB, slug);
+  if (!page) return c.html(notFoundPage(), 404);
+  const iv = page.password_hash == null ? telegramIvUrl(`${originUrl(c)}/${slug}`, c.env.TELEGRAM_IV_RHASH) : null;
+  if (!iv) return c.html(notFoundPage(), 404);
+  return c.redirect(iv, 302);
 });
 
 // Toggle search-engine indexing for a page (cookie-owner only).

@@ -8,6 +8,10 @@ export type Bindings = {
   // Optional: ChatGPT plugin directory domain-verification token, served at
   // /.well-known/openai-apps-challenge.
   OPENAI_APPS_CHALLENGE?: string;
+  // Optional: hash of our (unapproved) Telegram Instant View template. When
+  // set, pages get a t.me/iv?url=…&rhash=… link that opens as Instant View
+  // without Telegram having approved the template. See docs/telegram-instant-view.md.
+  TELEGRAM_IV_RHASH?: string;
 };
 
 export type Variables = {

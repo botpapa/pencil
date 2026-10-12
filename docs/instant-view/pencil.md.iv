@@ -1,0 +1,67 @@
+# Telegram Instant View template for pencil.md reader pages.
+# Paste into https://instantview.telegram.org/my/pencil.md (template editor),
+# format version 2.1. See ../telegram-instant-view.md for how it is used.
+
+~version: "2.1"
+
+# Only reader pages. Home/editor/pages list/stats/unlock screens have other
+# body classes and must stay in the browser.
+?exists: //body[has-class("page-reader")]
+
+site_name: "pencil.md"
+title:     //article[has-class("reader")]//h1[has-class("title")]
+body:      //article[has-class("reader")]//div[has-class("prose")]
+
+# "published Oct 11, 2026" → timestamp.
+$meta: //article[has-class("reader")]//div[has-class("meta")]
+@replace("^\\s*published\\s+", ""): $meta
+published_date: @datetime(0, "%b %d, %Y"): $meta
+
+# "#" anchors next to headings.
+@remove: $body//a[has-class("header-anchor")]
+
+# A leading H1 that just repeats the page title is noise under the IV title.
+@remove: $body/h1[1][normalize-space(.) = normalize-space($title)]
+
+# Tables are wrapped for horizontal scrolling; IV wants the bare <table>.
+@unwrap: $body//div[has-class("table-wrap")]
+
+# Task lists: IV has no checkboxes, keep the text, drop the inputs.
+@remove: $body//input[@type="checkbox"]
+
+# Code blocks: markdown-it emits <pre><code class="hljs language-xx">…</code></pre>
+# with highlight spans; IV wants plain text in <pre data-language="xx">.
+$code: $body//pre/code
+@set_attr(data-language, ./@class): $code
+@replace("^.*language-(\\S+).*$", "$1"): $code/@data-language
+@remove: $code//span[not(text())]
+@unwrap: $code//span
+@set_attr(data-language, ./code/@data-language): $code/..
+@unwrap: $code
+
+# Images → figures (stand-alone images sit alone in a <p>).
+$img_p: $body//p[count(img) = 1 and not(normalize-space(text()))]
+@wrap(<figure>): $img_p/img
+@unwrap: $img_p
+
+# ```carousel fences → slideshow.
+$carousels: $body//div[has-class("carousel")]
+@wrap(<figure>): $carousels//img
+@unwrap: $carousels//div[has-class("carousel-slide")]
+@unwrap: $carousels//div[has-class("carousel-track")]
+<slideshow>: $carousels
+
+# Footnotes (markdown-it-footnote): in-page anchors + drop the back-arrows.
+@remove: $body//a[has-class("footnote-backref")]
+$fn: $body//li[has-class("footnote-item")]
+@prepend(<anchor>): $fn
+@set_attr(name, ./../@id): $fn/anchor
+@prepend(<anchor>): $body//sup[has-class("footnote-ref")]
+@set_attr(name, ./../a/@id): $body//sup[has-class("footnote-ref")]/anchor
+@unwrap: $body//section[has-class("footnotes")]
+
+# Lazy-load / referrer hints are meaningless to IV.
+@remove: $body//@loading
+@remove: $body//@decoding
+@remove: $body//@referrerpolicy
+@remove: $body//@data-source-line

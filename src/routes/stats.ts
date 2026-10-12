@@ -5,6 +5,7 @@ import { ensureOwnerCookie } from "../lib/auth.js";
 import { getPage, ownerHasPages } from "../lib/db.js";
 import { isValidSlug } from "../lib/slug.js";
 import { statsPage, notFoundPage } from "../views/stats.js";
+import { originUrl, telegramIvUrl } from "../lib/http.js";
 import type { AppEnv } from "../types.js";
 
 const app = new Hono<AppEnv>();
@@ -26,6 +27,7 @@ app.get("/:slug/stats", async (c) => {
       createdAt: page.created_at,
       indexable: page.indexable === 1,
       protected: page.password_hash != null,
+      telegramUrl: page.password_hash == null ? telegramIvUrl(`${originUrl(c)}/${slug}`, c.env.TELEGRAM_IV_RHASH) : null,
       showPagesLink: await ownerHasPages(c.env.DB, c.get("ownerId")),
       host: c.req.header("host"),
     }),
