@@ -12,6 +12,8 @@ export type Bindings = {
   // set, pages get a t.me/iv?url=…&rhash=… link that opens as Instant View
   // without Telegram having approved the template. See docs/telegram-instant-view.md.
   TELEGRAM_IV_RHASH?: string;
+  // Optional: "@channel" shown as a join button in Instant View pages.
+  TELEGRAM_CHANNEL?: string;
 };
 
 export type Variables = {

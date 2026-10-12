@@ -44,6 +44,7 @@ import {
 import { homePage } from "../views/home.js";
 import { editorPage } from "../views/editor.js";
 import { readerPage } from "../views/reader.js";
+import { telegramIvPage, isTelegramCrawler } from "../views/telegram.js";
 import { pagesListPage } from "../views/pages.js";
 import { unlockPage } from "../views/unlock.js";
 import { notFoundPage } from "../views/stats.js";
@@ -204,6 +205,26 @@ app.get("/:slug", async (c) => {
     : plaintextExcerpt(page.content, 160) || `pencil.md page ${slug}`;
   const canonicalUrl = `${originUrl(c)}/${slug}`;
   const ogImage = `${originUrl(c)}/og/${slug}.png`;
+
+  // Telegram's crawler gets the Instant View bait page (see views/telegram.ts)
+  // so plain pencil.md links open as Instant View. `?tg-instantview=1` lets a
+  // human see what the crawler sees. Never for protected pages: the crawler
+  // can't unlock them, and we must not leak their content to it either.
+  if (!isProtected && (isTelegramCrawler(ua) || c.req.query("tg-instantview") === "1")) {
+    return c.html(
+      telegramIvPage({
+        title: page.title || "untitled",
+        htmlContent,
+        description,
+        ogImage,
+        canonicalUrl,
+        createdAt: page.created_at,
+        channel: c.env.TELEGRAM_CHANNEL,
+      }),
+      200,
+      { Vary: "User-Agent" },
+    );
+  }
 
   return c.html(
     readerPage({
