@@ -30,6 +30,12 @@
     }
   ],
 
+  // chat.pencil.md: one SQLite-backed Durable Object per chat room.
+  "durable_objects": {
+    "bindings": [{ "name": "CHAT", "class_name": "ChatRoom" }]
+  },
+  "migrations": [{ "tag": "v1-chat", "new_sqlite_classes": ["ChatRoom"] }],
+
   "vars": {
     "APP_NAME": "pencil.md"
   },

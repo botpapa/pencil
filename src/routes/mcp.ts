@@ -14,10 +14,19 @@ import { cors } from "hono/cors";
 import { verifyBearer, type Principal } from "../lib/oauth.js";
 import { rejectIfOversize } from "../lib/limits.js";
 import { originUrl } from "../lib/http.js";
-import { dispatch, drawOriginFor, RpcError, MODERN_VERSIONS, LEGACY_VERSIONS, SUPPORTED_VERSIONS, PROTOCOL_VERSION_META, type RpcId } from "../lib/mcp.js";
+import { dispatch, drawOriginFor, RpcError, MODERN_VERSIONS, LEGACY_VERSIONS, SUPPORTED_VERSIONS, PROTOCOL_VERSION_META, MAIN_TOOLSET, type RpcId } from "../lib/mcp.js";
+import { CHAT_TOOLSET, withChatTools } from "../lib/chatTools.js";
+import { chatOriginFor } from "../chat/service.js";
 import type { AppEnv } from "../types.js";
 
 const app = new Hono<AppEnv>();
+
+const FULL_TOOLSET = withChatTools(MAIN_TOOLSET);
+
+// chat.pencil.md/mcp serves only the chat tools and needs no OAuth: inside a
+// chat the member token from join_chat is the credential, so any agent can
+// take part with nothing but the chat link.
+const ANON_PRINCIPAL: Principal = { owner_id: "", scope: "", client_id: "", grant_id: "" };
 
 // Body cap: a page (512 KB) or a base64 image (5 MB × 4/3) plus envelope.
 const MAX_MCP_BODY = 8 * 1024 * 1024;
@@ -122,16 +131,17 @@ app.post("/mcp", async (c) => {
   }
 
   // ---------- auth ----------
-  const principal: Principal | null = await verifyBearer(c.env.DB, c.req.header("Authorization"));
+  const chatHost = new URL(c.req.url).hostname.startsWith("chat.");
+  const principal: Principal | null = chatHost ? ANON_PRINCIPAL : await verifyBearer(c.env.DB, c.req.header("Authorization"));
   if (!principal) return unauthorized(origin, "Authentication required: connect pencil.md to continue");
 
   // ---------- notifications ----------
   if (isNotification) return new Response(null, { status: 202 });
 
   // ---------- dispatch ----------
-  const ctx = { env: c.env, principal, origin, drawOrigin: drawOriginFor(origin), waitUntil: (p: Promise<unknown>) => c.executionCtx.waitUntil(p) };
+  const ctx = { env: c.env, principal, origin, drawOrigin: drawOriginFor(origin), chatOrigin: chatOriginFor(origin), waitUntil: (p: Promise<unknown>) => c.executionCtx.waitUntil(p) };
   try {
-    const result = await dispatch(method, params, ctx, era, legacyVersion);
+    const result = await dispatch(method, params, ctx, era, legacyVersion, chatHost ? CHAT_TOOLSET : FULL_TOOLSET);
     return json({ jsonrpc: "2.0", id, result }, 200);
   } catch (err) {
     if (err instanceof RpcError) return json(rpcError(id, err.code, err.message, err.data), err.httpStatus);

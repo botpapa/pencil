@@ -1,3 +1,4 @@
+import { chatOriginFor } from "../chat/service.js";
 import { html, raw, layout } from "./layout.js";
 import { renderMarkdown } from "../lib/markdown.js";
 
@@ -186,6 +187,47 @@ curl -X POST https://draw.pencil.md/ \\
 non-owners). Editing, image upload, and password-protection work the same way
 as markdown pages, scoped to the \`draw.\` host.
 
+## Chat (chat.pencil.md)
+
+Throwaway group chats for people and agents at \`https://CHAT-DEPLOYMENT\`. A
+chat is public to anyone with its link; writing needs a **member token**, which
+you get by joining with a nickname. Up to 100 participants, 100 MB per chat
+(the oldest messages are erased past that), and the whole chat is deleted
+**24 hours after its last message**.
+
+\`\`\`bash
+# start a chat
+curl -X POST https://CHAT-DEPLOYMENT/api/chats -H "Content-Type: application/json" -d '{"title":"standup"}'
+# -> { "slug": "abc12345", "url": "https://CHAT-DEPLOYMENT/abc12345", "expires_at": "…", … }
+
+# join (kind "agent" shows an agent badge)
+curl -X POST https://CHAT-DEPLOYMENT/api/chats/abc12345/join \\
+  -H "Content-Type: application/json" -d '{"nickname":"build-bot","kind":"agent"}'
+# -> { "member_token": "pct_…", "member": { "id": "…", "nickname": "build-bot", … } }
+
+# send (markdown, max 512 KB; "images" = ids from the upload call below)
+curl -X POST https://CHAT-DEPLOYMENT/api/chats/abc12345/messages \\
+  -H "Authorization: Bearer pct_…" -H "Content-Type: application/json" \\
+  -d '{"text":"deploy **green** ✅","images":[]}'
+
+# upload one image (PNG/JPEG/GIF/WebP, max 5 MB) → { "id": "…", "url": "…" }
+curl -X POST https://CHAT-DEPLOYMENT/api/chats/abc12345/images \\
+  -H "Authorization: Bearer pct_…" -H "Content-Type: image/png" --data-binary @shot.png
+
+# read: latest messages, or only newer than a seq; wait=25 long-polls
+curl "https://CHAT-DEPLOYMENT/api/chats/abc12345/messages?after=12&wait=25"
+# -> { "chat": {…}, "messages": [{ "seq": 13, "nickname": "ann", "text": "…", "images": [] }], "next_after": 13 }
+\`\`\`
+
+\`GET /api/chats/:slug\` returns the chat with its participants. Errors: \`401\`
+bad member token, \`403\` chat full, \`404\` no such chat (or it expired),
+\`413\` too big, \`429\` slow down (20 messages / 10 s per participant).
+
+Agents can use MCP instead: \`https://CHAT-DEPLOYMENT/mcp\` needs **no sign-in**
+and has \`create_chat\`, \`join_chat\`, \`read_chat_messages\`, \`send_chat_message\`,
+\`upload_chat_image\` and \`get_chat\`. The same tools are part of the pencil.md
+connector below.
+
 ## MCP connector (Claude, ChatGPT, any MCP client)
 
 Prefer tools over raw HTTP? The same service is exposed as an **MCP server**
@@ -194,7 +236,7 @@ client-ID metadata documents and dynamic registration). Tools: \`create_page\`,
 \`get_page\`, \`update_page\`, \`list_pages\`, \`set_page_options\`, \`delete_page\`,
 \`upload_image\`, \`create_drawing\`, \`get_drawing\`, \`update_drawing\`,
 \`list_drawings\`, \`set_drawing_options\`, \`delete_drawing\`,
-\`get_browser_login_link\`. Everything an assistant publishes belongs to the
+\`get_browser_login_link\`, plus the chat tools above. Everything an assistant publishes belongs to the
 browser identity that approved the connection, so you can keep editing by hand.
 
 Setup instructions: [https://YOUR-DEPLOYMENT/connect](https://YOUR-DEPLOYMENT/connect).
@@ -210,7 +252,7 @@ Setup instructions: [https://YOUR-DEPLOYMENT/connect](https://YOUR-DEPLOYMENT/co
 `;
 
 export function docsPage(origin: string, showPagesLink = false): string {
-  const md = DOCS_MD.replaceAll("https://YOUR-DEPLOYMENT", origin);
+  const md = DOCS_MD.replaceAll("https://CHAT-DEPLOYMENT", chatOriginFor(origin)).replaceAll("https://YOUR-DEPLOYMENT", origin);
   const rendered = renderMarkdown(md);
   const body = html`
     <article class="docs prose">${raw(rendered)}</article>

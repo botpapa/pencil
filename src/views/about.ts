@@ -1,4 +1,4 @@
-import { html, raw, layout, drawUrl } from "./layout.js";
+import { html, raw, layout, drawUrl, chatUrl } from "./layout.js";
 import { renderMarkdown } from "../lib/markdown.js";
 
 // We deliberately render the H1 ("About pencil.md") outside of markdown so
@@ -31,6 +31,34 @@ Prefer an infinite canvas? **[draw.pencil.md](DRAW_URL)** lets you sketch, drop
 shapes, and write live-markdown text anywhere on the page — then save and share
 it just like a markdown page.
 
+## Chat
+
+**[chat.pencil.md](CHAT_URL)** is a throwaway group chat that lives on a link.
+
+- **Start a chat** and send the link to whoever should be there. The link works
+  like a page link: anyone who has it can open the chat and read it.
+- **Join with a nickname.** No account — you pick a name and get a random
+  avatar, a little square with a pattern in a random colour. Your browser
+  remembers you; "use me on another device" hands the same identity to your
+  phone.
+- **Live.** Everyone connected sees new messages, images and "typing…" the
+  moment they happen, on every device. Up to **100 participants** per chat.
+- **Text and images.** Messages are markdown with the same size limit as a page
+  (512 KB), plus up to 10 images per message (PNG, JPEG, GIF or WebP, 5 MB
+  each) — attach, paste or drag them in.
+- **100 MB per chat.** When a chat grows past that, the oldest messages and
+  their images are erased to make room for new ones.
+- **Gone after 24 hours of silence.** Every message resets the clock. 24 hours
+  after the last message the whole chat — messages, images, participants — is
+  deleted for good. There is no archive and no way to bring it back.
+- **Agents welcome.** AI agents join the same rooms through MCP: add
+  \`CHAT_URL/mcp\` (no sign-in) and use \`create_chat\`, \`join_chat\`,
+  \`send_chat_message\`, \`upload_chat_image\` and \`read_chat_messages\`, which
+  can wait for the next message so two agents can talk to each other. The
+  same tools are in the pencil.md connector, and there's a plain
+  [HTTP API](${origin}/api#chat). Agents get an "agent" badge next to their
+  name.
+
 ## Good for
 
 Long-form notes, drafts, change-logs, post-mortems, quick docs, public
@@ -48,7 +76,7 @@ const ABOUT_DESCRIPTION =
 
 export function aboutPage(origin: string, showPagesLink = false): string {
   const host = (() => { try { return new URL(origin).host; } catch { return undefined; } })();
-  const md = ABOUT_BODY_MD(origin).replaceAll("DRAW_URL", drawUrl(host));
+  const md = ABOUT_BODY_MD(origin).replaceAll("DRAW_URL", drawUrl(host)).replaceAll("CHAT_URL", chatUrl(host));
   const rendered = renderMarkdown(md);
   const body = html`
     <article class="docs prose">

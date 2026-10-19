@@ -17,9 +17,13 @@ const CSP =
 
 export const securityHeaders: MiddlewareHandler<AppEnv> = async (c, next) => {
   await next();
+  // WebSocket upgrades come straight from a Durable Object stub with
+  // immutable headers (and headers are meaningless on them anyway).
+  if (c.res.status === 101) return;
   const ct = c.res.headers.get("Content-Type") ?? "";
   // Apply HTML-tier headers to all HTML responses.
-  if (ct.includes("text/html")) {
+  // Sub-apps may set their own (chat.* adds its WebSocket origin).
+  if (ct.includes("text/html") && !c.res.headers.has("Content-Security-Policy")) {
     c.res.headers.set("Content-Security-Policy", CSP);
   }
   c.res.headers.set("X-Content-Type-Options", "nosniff");

@@ -50,12 +50,13 @@ export type ToolContext = {
   principal: Principal;
   origin: string; // https://pencil.md
   drawOrigin: string; // https://draw.pencil.md
+  chatOrigin: string; // https://chat.pencil.md
   waitUntil: (p: Promise<unknown>) => void;
 };
 
-type JsonSchema = Record<string, unknown>;
+export type JsonSchema = Record<string, unknown>;
 
-type ToolDef = {
+export type ToolDef = {
   name: string;
   title: string;
   description: string;
@@ -67,7 +68,7 @@ type ToolDef = {
 
 // ---------- argument helpers ----------
 
-function str(args: Record<string, unknown>, key: string, opts: { required?: boolean; max?: number } = {}): string | undefined {
+export function str(args: Record<string, unknown>, key: string, opts: { required?: boolean; max?: number } = {}): string | undefined {
   const v = args[key];
   if (v === undefined || v === null) {
     if (opts.required) throw new ToolError(`${key} is required`);
@@ -634,27 +635,37 @@ export const TOOLS: ToolDef[] = [
 
 const TOOL_BY_NAME = new Map(TOOLS.map((t) => [t.name, t]));
 
-export function toolList(): Record<string, unknown>[] {
-  return TOOLS.map((t) => ({
+// A toolset is what one MCP endpoint serves: pencil.md/mcp (OAuth, every
+// tool) or chat.pencil.md/mcp (no auth, chat tools only — the member token
+// returned by join_chat is the credential).
+export type Toolset = { tools: ToolDef[]; instructions: string; auth: boolean };
+
+export const MAIN_TOOLSET: Toolset = { tools: TOOLS, instructions: INSTRUCTIONS, auth: true };
+
+export function toolList(toolset: Toolset = MAIN_TOOLSET): Record<string, unknown>[] {
+  return toolset.tools.map((t) => {
+    const schemes = toolset.auth ? [{ type: "oauth2", scopes: [t.scope] }] : [{ type: "noauth" }];
+    return {
     name: t.name,
     title: t.title,
     description: t.description,
     inputSchema: t.inputSchema,
     annotations: { title: t.title, ...t.annotations },
-    securitySchemes: [{ type: "oauth2", scopes: [t.scope] }],
+    securitySchemes: schemes,
     _meta: {
-      securitySchemes: [{ type: "oauth2", scopes: [t.scope] }],
+      securitySchemes: schemes,
       "openai/toolInvocation/invoking": t.annotations.readOnlyHint ? "Reading from pencil.md…" : "Working in pencil.md…",
       "openai/toolInvocation/invoked": t.annotations.readOnlyHint ? "Read from pencil.md" : "Done in pencil.md",
     },
-  }));
+    };
+  });
 }
 
-export async function callTool(name: unknown, args: unknown, ctx: ToolContext): Promise<Record<string, unknown>> {
-  const tool = typeof name === "string" ? TOOL_BY_NAME.get(name) : undefined;
+export async function callTool(name: unknown, args: unknown, ctx: ToolContext, toolset: Toolset = MAIN_TOOLSET): Promise<Record<string, unknown>> {
+  const tool = typeof name === "string" ? (toolset === MAIN_TOOLSET ? TOOL_BY_NAME.get(name) : toolset.tools.find((t) => t.name === name)) : undefined;
   if (!tool) throw new RpcError(-32602, `Unknown tool: ${String(name).slice(0, 64)}`);
   const a = args && typeof args === "object" && !Array.isArray(args) ? (args as Record<string, unknown>) : {};
-  if (!hasScope(ctx.principal.scope, tool.scope)) {
+  if (toolset.auth && !hasScope(ctx.principal.scope, tool.scope)) {
     return {
       content: [{ type: "text", text: `This connection was authorised without the "${tool.scope}" scope. Reconnect pencil.md to grant it.` }],
       isError: true,
@@ -684,6 +695,7 @@ export async function dispatch(
   ctx: ToolContext,
   era: "modern" | "legacy",
   legacyVersion: string,
+  toolset: Toolset = MAIN_TOOLSET,
 ): Promise<Record<string, unknown>> {
   const modern = era === "modern";
   switch (method) {
@@ -694,19 +706,19 @@ export async function dispatch(
         supportedVersions: [...SUPPORTED_VERSIONS],
         capabilities: CAPABILITIES,
         _meta: { "io.modelcontextprotocol/serverInfo": SERVER_INFO },
-        instructions: INSTRUCTIONS,
+        instructions: toolset.instructions,
         ttlMs: 3_600_000,
         cacheScope: "public",
       };
     case "initialize":
       if (modern) throw new RpcError(-32601, "Method not found", undefined, 404);
-      return { protocolVersion: legacyVersion, capabilities: CAPABILITIES, serverInfo: SERVER_INFO, instructions: INSTRUCTIONS };
+      return { protocolVersion: legacyVersion, capabilities: CAPABILITIES, serverInfo: SERVER_INFO, instructions: toolset.instructions };
     case "ping":
       return modern ? { resultType: "complete" } : {};
     case "tools/list":
-      return modern ? { resultType: "complete", tools: toolList(), ttlMs: 300_000, cacheScope: "public" } : { tools: toolList() };
+      return modern ? { resultType: "complete", tools: toolList(toolset), ttlMs: 300_000, cacheScope: "public" } : { tools: toolList(toolset) };
     case "tools/call": {
-      const r = await callTool(params.name, params.arguments, ctx);
+      const r = await callTool(params.name, params.arguments, ctx, toolset);
       return modern ? { resultType: "complete", ...r } : r;
     }
     case "prompts/list":

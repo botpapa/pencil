@@ -7,6 +7,7 @@ import api from "./routes/api.js";
 import stats from "./routes/stats.js";
 import og from "./routes/og.js";
 import draw from "./routes/draw.js";
+import chat from "./routes/chat.js";
 import oauth from "./routes/oauth.js";
 import mcp from "./routes/mcp.js";
 import { connectPage, privacyPage, termsPage } from "./views/connect.js";
@@ -21,7 +22,7 @@ const app = new Hono<AppEnv>();
 app.use("*", securityHeaders);
 
 // Host dispatch: any "draw.*" host (draw.pencil.md in prod, draw.localhost in
-// dev) is its own app. Derive the host from the request URL — the Host header
+// dev) is its own app, and so is "chat.*". Derive the host from the request URL — the Host header
 // isn't always present (e.g. in the test runtime). Runs after securityHeaders
 // so the draw responses still get the CSP/headers.
 app.use("*", async (c, next) => {
@@ -33,6 +34,9 @@ app.use("*", async (c, next) => {
   }
   if (host.startsWith("draw.")) {
     return draw.fetch(c.req.raw, c.env, c.executionCtx);
+  }
+  if (host.startsWith("chat.")) {
+    return chat.fetch(c.req.raw, c.env, c.executionCtx);
   }
   await next();
 });
@@ -122,3 +126,6 @@ app.onError((err, c) => {
 });
 
 export default app;
+
+// Durable Object class for chat.pencil.md rooms (bound as CHAT).
+export { ChatRoom } from "./chat/room.js";

@@ -3,6 +3,8 @@ export type Bindings = {
   OG_CACHE: R2Bucket;
   IMAGES: R2Bucket;
   ASSETS: Fetcher;
+  // chat.pencil.md: one Durable Object per chat room (src/chat/room.ts).
+  CHAT: DurableObjectNamespace<import("./chat/room.js").ChatRoom>;
   COOKIE_SECRET: string;
   APP_NAME: string;
   // Optional: ChatGPT plugin directory domain-verification token, served at
@@ -83,3 +85,13 @@ export type DrawingSummary = {
 export const MAX_SCENE_BYTES = 2 * 1024 * 1024;
 export const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 export const ALLOWED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"];
+
+// ---------- chat.pencil.md ----------
+
+// A message carries the same text budget as a page; images are uploaded one by
+// one under the same 5 MB cap the editors use.
+export const CHAT_MAX_MEMBERS = 100;
+export const CHAT_MAX_BYTES = 100 * 1024 * 1024;
+export const CHAT_TTL_MS = 24 * 60 * 60 * 1000;
+export const CHAT_MAX_IMAGES_PER_MESSAGE = 10;
+export const CHAT_MAX_NICKNAME = 32;

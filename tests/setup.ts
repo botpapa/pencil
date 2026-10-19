@@ -5,6 +5,8 @@ declare module "cloudflare:test" {
     DB: D1Database;
     OG_CACHE: R2Bucket;
     ASSETS: Fetcher;
+    IMAGES: R2Bucket;
+    CHAT: DurableObjectNamespace<import("../src/chat/room.js").ChatRoom>;
     COOKIE_SECRET: string;
     APP_NAME: string;
     TEST_MIGRATIONS: D1Migration[];

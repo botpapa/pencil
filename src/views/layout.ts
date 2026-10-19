@@ -54,6 +54,11 @@ export function drawUrl(host?: string): string {
   return `${local ? "http" : "https"}://draw.${host}`;
 }
 
+// Same for the chat.* sibling app.
+export function chatUrl(host?: string): string {
+  return drawUrl(host).replace("://draw.", "://chat.");
+}
+
 export type LayoutOpts = {
   title: string;
   description?: string;
@@ -117,7 +122,7 @@ ${topbar}
 ${bodyHtml}
 </main>
 <footer class="footer">
-<a href="/about">about</a> &middot; <a href="${escape(drawUrl(opts.host))}">draw</a> &middot; <a href="/api">api</a> &middot; <a href="/connect">claude &amp; chatgpt</a>${opts.showPagesLink ? ` &middot; <a href="/pages">my pages</a>` : ""}
+<a href="/about">about</a> &middot; <a href="${escape(drawUrl(opts.host))}">draw</a> &middot; <a href="${escape(chatUrl(opts.host))}">chat</a> &middot; <a href="/api">api</a> &middot; <a href="/connect">claude &amp; chatgpt</a>${opts.showPagesLink ? ` &middot; <a href="/pages">my pages</a>` : ""}
 </footer>
 </div>
 </body>

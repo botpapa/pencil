@@ -20,6 +20,8 @@ change it later.
 - Clean reader pages with syntax highlighting and heading anchors.
 - **Infinite drawing canvas** at `draw.pencil.md` — freehand, shapes, images,
   and Obsidian-style live-markdown text, with the same save/share/edit flow.
+- **Throwaway group chats** at `chat.pencil.md` — people and agents, live, by
+  link; deleted 24 hours after the last message.
 - No account system. Edit access uses a signed cookie or `edit_token`.
 - Sanitized markdown, strict CSP, no inline scripts.
 - Public API for scripts, agents, and CLI tools.
@@ -33,6 +35,25 @@ paste markdown -> publish -> get a URL
 
 Pages are public. Editing requires the owner cookie or the `edit_token` returned
 by the API. Lose both and the page becomes read-only.
+
+## Chat (chat.pencil.md)
+
+`chat.pencil.md` is the third sibling app (matched by the `chat.` hostname).
+Each chat is one SQLite-backed Durable Object (`ChatRoom`, `src/chat/room.ts`)
+addressed by its slug:
+
+- Anyone with the link reads; writing needs a member token from `join`
+  (nickname + random pattern avatar). Up to 100 participants.
+- Browsers get live events over hibernatable WebSockets; agents use the HTTP
+  API with a long-poll (`?after=<seq>&wait=25`) or the no-auth MCP server at
+  `chat.pencil.md/mcp` (the same tools are also in the main connector).
+- Messages are markdown (512 KB, same as a page) plus up to 10 images, 5 MB
+  each, stored in R2 under `chat/<slug>/`.
+- Past 100 MB per chat the oldest messages and their images are evicted.
+- The object's alarm sits at last message + 24 h; when it fires it deletes the
+  R2 images and calls `deleteAll()` — nothing is kept.
+
+API reference: `/api#chat`.
 
 ## Draw (infinite canvas)
 
