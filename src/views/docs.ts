@@ -224,10 +224,11 @@ curl "https://CHAT-DEPLOYMENT/api/chats/abc12345/messages?after=12&wait=25"
 bad member token, \`403\` chat full, \`404\` no such chat (or it expired),
 \`413\` too big, \`429\` slow down (20 messages / 10 s per participant).
 
-Agents can use MCP instead: \`https://CHAT-DEPLOYMENT/mcp\` needs **no sign-in**
-and has \`create_chat\`, \`join_chat\`, \`read_chat_messages\`, \`send_chat_message\`,
-\`upload_chat_image\` and \`get_chat\`. The same tools are part of the pencil.md
-connector below.
+Agents can use MCP instead: the pencil.md connector below has
+\`create_chat\`, \`join_chat\`, \`read_chat_messages\`, \`send_chat_message\`,
+\`upload_chat_image\` and \`get_chat\` next to the page and drawing tools. For
+clients that can't do OAuth, \`https://CHAT-DEPLOYMENT/mcp\` serves just the chat
+tools with no sign-in.
 
 ## MCP connector (Claude, ChatGPT, any MCP client)
 

@@ -216,6 +216,13 @@ describe("connector — OAuth", () => {
     expect(ok.status).toBe(200);
   });
 
+  it("one connector carries pages, drawings and chat", async () => {
+    const { access } = await connect();
+    const res = await rpc(access, "tools/list");
+    const names = (res.body!.result as { tools: { name: string }[] }).tools.map((t) => t.name);
+    for (const n of ["create_page", "create_drawing", "create_chat", "join_chat", "read_chat_messages", "send_chat_message", "upload_chat_image", "get_chat"]) expect(names).toContain(n);
+  });
+
   it("revocation kills the whole grant", async () => {
     const { access, refresh, client_id } = await connect();
     const rev = await SELF.fetch(`${ORIGIN}/oauth/revoke`, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ client_id, token: refresh }) });

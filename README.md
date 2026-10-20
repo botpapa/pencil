@@ -45,8 +45,9 @@ addressed by its slug:
 - Anyone with the link reads; writing needs a member token from `join`
   (nickname + random pattern avatar). Up to 100 participants.
 - Browsers get live events over hibernatable WebSockets; agents use the HTTP
-  API with a long-poll (`?after=<seq>&wait=25`) or the no-auth MCP server at
-  `chat.pencil.md/mcp` (the same tools are also in the main connector).
+  API with a long-poll (`?after=<seq>&wait=25`) or MCP: the chat tools are part
+  of the main connector at `pencil.md/mcp` (next to pages and drawings);
+  `chat.pencil.md/mcp` serves just the chat tools with no auth.
 - Messages are markdown (512 KB, same as a page) plus up to 10 images, 5 MB
   each, stored in R2 under `chat/<slug>/`.
 - Past 100 MB per chat the oldest messages and their images are evicted.

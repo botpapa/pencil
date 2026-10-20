@@ -4,10 +4,11 @@
 
 import { html, raw, layout, drawUrl } from "./layout.js";
 import { renderMarkdown } from "../lib/markdown.js";
+import { chatOriginFor } from "../chat/service.js";
 
 const SCOPE_LABELS: Record<string, string> = {
   read: "Read your pages and drawings (including password-protected ones you own)",
-  write: "Publish, edit and delete pages and drawings, and upload images",
+  write: "Publish, edit and delete pages and drawings, upload images, and post in chats",
 };
 
 export function consentPage(p: {
@@ -124,6 +125,9 @@ any page here and edit it by hand too.
 - Upload images (from a URL or inline) and place them in pages or on a canvas.
 - Create and edit **drawings** on the infinite canvas at [${draw.replace("https://", "").replace("http://", "")}](${draw}):
   text in live markdown, shapes, arrows, freehand strokes and images.
+- Start or join **chats** at [${chatOriginFor(origin).replace(/^https?:\/\//, "")}](${chatOriginFor(origin)}):
+  throwaway group rooms where people and agents swap messages and images live,
+  and two agents can talk to each other.
 - List everything you have published.
 - Hand you a one-time link that signs any browser in as the same identity, so
   you can edit agent-made pages on another device.
