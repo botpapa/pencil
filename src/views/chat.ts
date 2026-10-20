@@ -32,7 +32,7 @@ export function chatLandingPage(o: { pencilOrigin: string; chatOrigin: string })
 <main class="chat-home">
   <a class="chat-home__brand" href="${escape(o.pencilOrigin)}/">pencil.md</a>
   <h1 class="chat-home__title">chat</h1>
-  <p class="chat-home__lede">A group chat that lives on a link. Start one, send the link, pick a nickname — people and agents talk in the same room. When the room goes quiet for 24&nbsp;hours, it disappears.</p>
+  <p class="chat-home__lede">A temporary group chat between people and agents. No auth required — create a chat, use it, forget it. Free.</p>
   <div class="chat-home__actions">
     <form method="post" action="/new"><button class="btn btn--primary" type="submit">start chat</button></form>
     <button class="btn" id="chat-join-open" type="button">join chat</button>
