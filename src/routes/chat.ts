@@ -7,6 +7,7 @@
 //   GET  /:slug/img/:name          chat images from R2
 //   POST /api/chats                create (JSON)
 //   GET  /api/chats/:slug          info + members
+//   PATCH /api/chats/:slug         rename (Bearer member token)
 //   POST /api/chats/:slug/join     pick a nickname → member token
 //   GET  /api/chats/:slug/messages history / long-poll (?after=&wait=)
 //   POST /api/chats/:slug/messages send (Bearer member token)
@@ -21,6 +22,7 @@ import { cors } from "hono/cors";
 import { rejectIfOversize } from "../lib/limits.js";
 import { ingestImage } from "../lib/image.js";
 import { isValidSlug } from "../lib/slug.js";
+import { normalizeTitle } from "../lib/http.js";
 import { chatLandingPage, chatRoomPage, chatNotFoundPage } from "../views/chat.js";
 import { roomFor, createChat, uploadChatImage, apiInfo, apiMember, apiMessage, apiImage, chatOriginFor } from "../chat/service.js";
 import mcp from "./mcp.js";
@@ -44,7 +46,7 @@ app.use("*", async (c, next) => {
   );
 });
 
-app.use("/api/*", cors({ origin: "*", allowMethods: ["GET", "POST", "OPTIONS"], allowHeaders: ["Authorization", "Content-Type"], maxAge: 86400 }));
+app.use("/api/*", cors({ origin: "*", allowMethods: ["GET", "POST", "PATCH", "OPTIONS"], allowHeaders: ["Authorization", "Content-Type"], maxAge: 86400 }));
 
 function chatOrigin(c: Context<AppEnv>): string {
   return chatOriginFor(new URL(c.req.url).origin);
@@ -87,6 +89,7 @@ app.get("/", (c) => c.html(chatLandingPage({ pencilOrigin: pencilOrigin(c), chat
 app.post("/new", async (c) => {
   const tooBig = rejectIfOversize(c, 16 * 1024, "text");
   if (tooBig) return tooBig;
+  // Chats start untitled; participants name them from inside the room.
   const form = await c.req.parseBody().catch(() => ({}) as Record<string, unknown>);
   const info = await createChat(c.env, (form as Record<string, unknown>).title);
   return c.redirect(`/${info.slug}`, 303);
@@ -111,6 +114,19 @@ app.get("/api/chats/:slug", async (c) => {
   const info = await roomFor(c.env, slug).getInfo();
   if (!info) return err(c, 404, "chat not found (it may have expired)");
   return c.json({ ...apiInfo(chatOrigin(c), info), members: info.members.map(apiMember), online: info.online });
+});
+
+app.patch("/api/chats/:slug", async (c) => {
+  const slug = c.req.param("slug");
+  if (!isValidSlug(slug)) return err(c, 404, "chat not found");
+  const tooBig = rejectIfOversize(c, 4 * 1024);
+  if (tooBig) return tooBig;
+  const body = await readJson(c);
+  if (!body) return err(c, 400, "invalid JSON");
+  if (typeof body.title !== "string") return err(c, 400, "title must be a string");
+  const r = await roomFor(c.env, slug).rename(bearer(c, body), normalizeTitle(body.title));
+  if (!r.ok) return err(c, r.status, r.error);
+  return c.json(apiInfo(chatOrigin(c), r.value));
 });
 
 app.post("/api/chats/:slug/join", async (c) => {

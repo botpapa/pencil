@@ -68,6 +68,7 @@ function randomAvatar(): Avatar {
 
 function mb(n: number): string {
   const v = n / 1024 / 1024;
+  if (v === 0) return "0";
   return v < 10 ? v.toFixed(1) : String(Math.round(v));
 }
 
@@ -127,7 +128,50 @@ async function api<T>(path: string, init: RequestInit = {}): Promise<{ ok: true;
 
 // ---------- landing ----------
 
+// A chat ID is the 8-character slug; a pasted link works too.
+function chatSlugFrom(raw: string): string | null {
+  let s = raw.trim();
+  if (/^(https?:\/\/|chat\.)/i.test(s)) {
+    try {
+      s = new URL(/^https?:/i.test(s) ? s : `https://${s}`).pathname.split("/").filter(Boolean)[0] ?? "";
+    } catch {
+      return null;
+    }
+  }
+  return /^[2-9a-km-zA-HJ-NP-Z]{8}$/.test(s) ? s : null;
+}
+
+function joinDialog(): void {
+  const dialog = $<HTMLDialogElement>("chat-join-dialog");
+  const form = $<HTMLFormElement>("chat-join-chat");
+  const input = $<HTMLInputElement>("chat-join-id");
+  const error = $("chat-join-error");
+  const showError = (msg: string) => {
+    error.textContent = msg;
+    error.hidden = false;
+  };
+  $("chat-join-open").addEventListener("click", () => {
+    error.hidden = true;
+    input.value = "";
+    dialog.showModal();
+    input.focus();
+  });
+  $("chat-join-cancel").addEventListener("click", () => dialog.close());
+  // Click on the backdrop closes it.
+  dialog.addEventListener("click", (e) => e.target === dialog && dialog.close());
+  input.addEventListener("input", () => (error.hidden = true));
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const slug = chatSlugFrom(input.value);
+    if (!slug) return showError("that doesn't look like a chat ID — it's the 8 characters after chat.pencil.md/");
+    const r = await api(`/api/chats/${slug}`);
+    if (r.ok) return location.assign(`/${slug}`);
+    showError(r.status === 404 ? "no such chat — it may have been deleted after 24 quiet hours" : r.error);
+  });
+}
+
 function landing(): void {
+  joinDialog();
   const store = loadStore();
   const now = Date.now();
   const live = Object.entries(store).filter(([, v]) => v.expires_at > now);
@@ -166,7 +210,7 @@ function room(slug: string): void {
   let gone = false;
   let loadingOlder = false;
   let unread = 0;
-  const baseTitle = document.title;
+  const baseTitle = () => `${info?.title || "chat"} — chat.pencil.md`;
   const typingUntil = new Map<string, number>();
 
   // ----- identity bootstrap: #as=<token> hands an identity to this device -----
@@ -255,14 +299,21 @@ function room(slug: string): void {
     else if (fromOthers.length) jump.hidden = false;
     if (document.hidden && fromOthers.length) {
       unread += fromOthers.length;
-      document.title = `(${unread}) ${baseTitle}`;
+      document.title = `(${unread}) ${baseTitle()}`;
     }
   }
 
   function renderMeta(): void {
     if (!info) return;
-    const left = info.expires_at - Date.now();
-    $("chat-meta").innerHTML = `<span title="Chats keep up to ${mb(info.max_bytes)} MB; the oldest messages are erased past that.">${mb(info.bytes)} / ${mb(info.max_bytes)} MB</span><span title="The chat and everything in it is deleted 24 hours after the last message.">deletes in ${esc(timeLeft(left))} if quiet</span>`;
+    const left = Math.max(0, info.expires_at - Date.now());
+    const clock = $("chat-clock");
+    const size = $("chat-size");
+    clock.textContent = `${String(Math.floor(left / 3_600_000)).padStart(2, "0")}:${String(Math.floor((left % 3_600_000) / 60_000)).padStart(2, "0")}`;
+    clock.dataset.tip = `Time left before this chat and everything in it is deleted (${timeLeft(left)}). Every new message resets it to 24 hours.`;
+    size.textContent = `${mb(info.bytes)} / ${mb(info.max_bytes)} MB`;
+    size.dataset.tip = `Space used by messages and images. A chat holds ${mb(info.max_bytes)} MB; past that, the oldest messages are erased to make room.`;
+    clock.setAttribute("aria-label", clock.dataset.tip);
+    size.setAttribute("aria-label", size.dataset.tip);
     $("chat-count").textContent = String(info.member_count);
   }
 
@@ -284,7 +335,80 @@ function room(slug: string): void {
     typingBox.textContent = names.length === 0 ? "" : names.length === 1 ? `${names[0]} is typing…` : names.length < 4 ? `${names.join(", ")} are typing…` : "several people are typing…";
   }
 
+  // ----- title: any participant can name the chat -----
+
+  const titleEl = $("chat-title");
+  let editingTitle = false;
+
+  function renderTitle(): void {
+    if (editingTitle) return;
+    const t = info?.title ?? "";
+    const editable = !!me && !gone;
+    titleEl.textContent = t || (editable ? "add a title" : "");
+    titleEl.classList.toggle("is-empty", !t);
+    titleEl.classList.toggle("is-editable", editable);
+    if (editable) {
+      titleEl.tabIndex = 0;
+      titleEl.setAttribute("role", "button");
+      titleEl.title = "rename this chat";
+    } else {
+      titleEl.removeAttribute("tabindex");
+      titleEl.removeAttribute("role");
+      titleEl.removeAttribute("title");
+    }
+    if (!unread) document.title = baseTitle();
+  }
+
+  function editTitle(): void {
+    if (!me || gone || editingTitle || !info) return;
+    editingTitle = true;
+    const input = document.createElement("input");
+    input.className = "chat-bar__title-input";
+    input.maxLength = 200;
+    input.value = info.title;
+    input.placeholder = "name this chat";
+    input.setAttribute("aria-label", "chat title");
+    titleEl.replaceChildren(input);
+    titleEl.classList.remove("is-empty");
+    input.focus();
+    input.select();
+    let done = false;
+    const finish = async (save: boolean) => {
+      if (done) return;
+      done = true;
+      const next = input.value.trim();
+      if (save && me && info && next !== info.title) {
+        const r = await api<{ title: string }>(`/api/chats/${slug}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${me.token}` },
+          body: JSON.stringify({ title: next }),
+        });
+        if (r.ok) {
+          info = { ...info, title: r.data.title };
+          remember(me.token, me.member_id);
+        } else toast(r.error);
+      }
+      editingTitle = false;
+      renderTitle();
+    };
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        void finish(true);
+      } else if (e.key === "Escape") void finish(false);
+    });
+    input.addEventListener("blur", () => void finish(true));
+  }
+  titleEl.addEventListener("click", editTitle);
+  titleEl.addEventListener("keydown", (e) => {
+    if (e.target === titleEl && (e.key === "Enter" || e.key === " ")) {
+      e.preventDefault();
+      editTitle();
+    }
+  });
+
   function showComposer(): void {
+    renderTitle();
     joinForm.hidden = true;
     compose.hidden = gone;
     renderPeople();
@@ -302,7 +426,9 @@ function room(slug: string): void {
     joinForm.hidden = true;
     compose.hidden = true;
     $("chat-gone").hidden = false;
-    $("chat-meta").textContent = "deleted";
+    $("chat-clock").textContent = "00:00";
+    $("chat-clock").dataset.tip = "This chat was deleted.";
+    titleEl.classList.remove("is-editable");
     ws?.close();
   }
 
@@ -505,7 +631,11 @@ function room(slug: string): void {
   peopleBtn.addEventListener("click", () => {
     people.hidden = !people.hidden;
     peopleBtn.setAttribute("aria-expanded", String(!people.hidden));
-    if (!people.hidden) renderPeople();
+    if (!people.hidden) {
+      // The header wraps to two rows on phones when the chat has a title.
+      people.style.top = `${document.querySelector(".chat-bar")!.getBoundingClientRect().height}px`;
+      renderPeople();
+    }
   });
   document.addEventListener("click", (e) => {
     if (!people.hidden && !people.contains(e.target as Node) && !peopleBtn.contains(e.target as Node)) {
@@ -523,6 +653,7 @@ function room(slug: string): void {
     wsSend({ type: "auth", token: "" });
     people.hidden = true;
     showJoin();
+    renderTitle();
     renderAll();
   });
 
@@ -615,6 +746,12 @@ function room(slug: string): void {
           renderMeta();
           addMessages([ev.message as Message]);
           break;
+        case "title":
+          info = ev.info as Info;
+          if (me) remember(me.token, me.member_id);
+          renderTitle();
+          renderMeta();
+          break;
         case "member": {
           const m = ev.member as Member;
           members.set(m.id, m);
@@ -656,14 +793,14 @@ function room(slug: string): void {
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden) {
       unread = 0;
-      document.title = baseTitle;
+      document.title = baseTitle();
       connect();
     }
   });
   setInterval(() => {
     renderMeta();
     renderTyping();
-  }, 30_000);
+  }, 15_000);
 
   // ----- boot -----
 
@@ -689,6 +826,7 @@ function room(slug: string): void {
     }
     renderAll();
     renderMeta();
+    renderTitle();
     if (me) showComposer();
     else showJoin();
     syncSend();

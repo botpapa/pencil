@@ -45,8 +45,10 @@ describe("chat — rooms", () => {
   it("serves the landing page and creates a chat from the form", async () => {
     const home = await SELF.fetch(`${CHAT}/`);
     expect(home.status).toBe(200);
-    expect(await home.text()).toContain("start a chat");
-    const res = await SELF.fetch(`${CHAT}/new`, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: "title=hi", redirect: "manual" });
+    const homeHtml = await home.text();
+    expect(homeHtml).toContain("start chat");
+    expect(homeHtml).toContain("join chat");
+    const res = await SELF.fetch(`${CHAT}/new`, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: "", redirect: "manual" });
     expect(res.status).toBe(303);
     const loc = res.headers.get("Location")!;
     expect(loc).toMatch(/^\/[A-Za-z0-9]{8}$/);
@@ -55,6 +57,19 @@ describe("chat — rooms", () => {
     const html = await room.text();
     expect(html).toContain('data-page="room"');
     expect(room.headers.get("Content-Security-Policy")).toContain("wss://chat.localhost");
+  });
+
+  it("lets participants rename a chat", async () => {
+    const slug = await createChat("");
+    const t = await token(slug, "ann");
+    const patch = (body: Record<string, unknown>, auth = t) =>
+      SELF.fetch(`${CHAT}/api/chats/${slug}`, { method: "PATCH", headers: { "Content-Type": "application/json", Authorization: `Bearer ${auth}` }, body: JSON.stringify(body) });
+    expect((await patch({ title: "nope" }, "pct_nope_nope")).status).toBe(401);
+    expect((await patch({ title: 5 })).status).toBe(400);
+    const res = await patch({ title: "  standup  " });
+    expect(res.status).toBe(200);
+    expect((await json<{ title: string }>(res)).title).toBe("standup");
+    expect((await json<{ title: string }>(await SELF.fetch(`${CHAT}/api/chats/${slug}`))).title).toBe("standup");
   });
 
   it("404s unknown chats without creating them", async () => {

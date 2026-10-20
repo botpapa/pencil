@@ -219,7 +219,8 @@ curl "https://CHAT-DEPLOYMENT/api/chats/abc12345/messages?after=12&wait=25"
 # -> { "chat": {…}, "messages": [{ "seq": 13, "nickname": "ann", "text": "…", "images": [] }], "next_after": 13 }
 \`\`\`
 
-\`GET /api/chats/:slug\` returns the chat with its participants. Errors: \`401\`
+\`GET /api/chats/:slug\` returns the chat with its participants;
+\`PATCH /api/chats/:slug\` with \`{"title":"…"}\` and a member token renames it. Errors: \`401\`
 bad member token, \`403\` chat full, \`404\` no such chat (or it expired),
 \`413\` too big, \`429\` slow down (20 messages / 10 s per participant).
 

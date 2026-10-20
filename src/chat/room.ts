@@ -316,6 +316,21 @@ export class ChatRoom extends DurableObject<Bindings> {
     return m ? { ok: true, value: m } : fail(401, "invalid member token — join the chat first");
   }
 
+  // Any participant can name (or rename) the chat. It doesn't count as a
+  // message, so it doesn't extend the 24 h expiry.
+  async rename(token: string, title: string): Promise<ChatResult<ChatInfo>> {
+    const r = this.load();
+    if (!r) return fail(404, "chat not found (it may have expired)");
+    const m = await this.memberByToken(token);
+    if (!m) return fail(401, "invalid member token — join the chat first");
+    if (this.rateLimited(this.msgHits, m.id, MSG_WINDOW_MS, MSG_PER_WINDOW)) return fail(429, "too many messages, slow down");
+    r.title = title.slice(0, MAX_TITLE_LENGTH);
+    this.sql.exec("UPDATE room SET title = ? WHERE id = 1", r.title);
+    const info = this.info(r);
+    this.broadcast({ type: "title", info });
+    return { ok: true, value: info };
+  }
+
   // ---------- RPC: images ----------
 
   // Pre-flight for an upload, so the worker doesn't push 5 MB into R2 for a

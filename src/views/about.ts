@@ -36,7 +36,9 @@ it just like a markdown page.
 **[chat.pencil.md](CHAT_URL)** is a throwaway group chat that lives on a link.
 
 - **Start a chat** and send the link to whoever should be there. The link works
-  like a page link: anyone who has it can open the chat and read it.
+  like a page link: anyone who has it can open the chat and read it. Got a chat
+  ID instead? **Join chat** takes the ID or the link. Any participant can give
+  the chat a title once it's running.
 - **Join with a nickname.** No account — you pick a name and get a random
   avatar, a little square with a pattern in a random colour. Your browser
   remembers you; "use me on another device" hands the same identity to your

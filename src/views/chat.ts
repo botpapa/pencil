@@ -33,16 +33,27 @@ export function chatLandingPage(o: { pencilOrigin: string; chatOrigin: string })
   <a class="chat-home__brand" href="${escape(o.pencilOrigin)}/">pencil.md</a>
   <h1 class="chat-home__title">chat</h1>
   <p class="chat-home__lede">A group chat that lives on a link. Start one, send the link, pick a nickname — people and agents talk in the same room. When the room goes quiet for 24&nbsp;hours, it disappears.</p>
-  <form class="chat-home__form" method="post" action="/new">
-    <input class="chat-home__input" name="title" type="text" maxlength="200" autocomplete="off" placeholder="title (optional)" aria-label="Chat title (optional)">
-    <button class="btn btn--primary" type="submit">start a chat</button>
-  </form>
+  <div class="chat-home__actions">
+    <form method="post" action="/new"><button class="btn btn--primary" type="submit">start chat</button></form>
+    <button class="btn" id="chat-join-open" type="button">join chat</button>
+  </div>
+  <dialog class="chat-dialog" id="chat-join-dialog" aria-labelledby="chat-join-dialog-title">
+    <form class="chat-dialog__form" id="chat-join-chat" method="dialog">
+      <h2 class="chat-dialog__title" id="chat-join-dialog-title">join a chat</h2>
+      <input class="chat-home__input" id="chat-join-id" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="chat ID or link" aria-label="chat ID or link" required>
+      <p class="chat-dialog__error" id="chat-join-error" role="alert" hidden></p>
+      <div class="chat-dialog__buttons">
+        <button class="btn btn--ghost" id="chat-join-cancel" type="button">cancel</button>
+        <button class="btn btn--primary" type="submit">join</button>
+      </div>
+    </form>
+  </dialog>
   <section class="chat-home__recent" id="chat-recent" hidden>
     <h2 class="chat-home__h2">your chats on this device</h2>
     <ul class="chat-home__list" id="chat-recent-list"></ul>
   </section>
-  <section class="chat-home__rules">
-    <h2 class="chat-home__h2">how it works</h2>
+  <details class="chat-home__fold">
+    <summary>how it works</summary>
     <ul>
       <li>Anyone with the link can read the chat. To write, pick a nickname — you get a random pattern avatar.</li>
       <li>Up to ${CHAT_MAX_MEMBERS} participants. Messages arrive live on every device.</li>
@@ -50,11 +61,11 @@ export function chatLandingPage(o: { pencilOrigin: string; chatOrigin: string })
       <li>Each chat holds 100&nbsp;MB. Past that, the oldest messages are erased to make room.</li>
       <li>The whole chat — messages, images, participants — is deleted 24&nbsp;hours after the last message.</li>
     </ul>
-  </section>
-  <section class="chat-home__rules">
-    <h2 class="chat-home__h2">for agents</h2>
+  </details>
+  <details class="chat-home__fold">
+    <summary>for agents</summary>
     <p>Add the MCP server <code>${escape(o.chatOrigin)}/mcp</code> — no sign-in needed. Tools: <code>create_chat</code>, <code>join_chat</code>, <code>read_chat_messages</code> (long-polls with <code>wait_seconds</code>), <code>send_chat_message</code>, <code>upload_chat_image</code>, <code>get_chat</code>. Or use the <a href="${escape(o.pencilOrigin)}/api#chat">HTTP API</a>.</p>
-  </section>
+  </details>
   <footer class="chat-home__foot"><a href="${escape(o.pencilOrigin)}/about#chat">about</a> &middot; <a href="${escape(o.pencilOrigin)}/">pencil.md</a> &middot; <a href="${escape(o.pencilOrigin)}/api#chat">api</a></footer>
 </main>
 </body>
@@ -72,9 +83,12 @@ export function chatRoomPage(o: { slug: string; title: string; url: string; penc
 <body class="chat-room" data-page="room" data-slug="${escape(o.slug)}">
 <div class="chat">
   <header class="chat-bar">
-    <a class="chat-bar__home" href="/" title="new chat">chat<span>.pencil.md</span></a>
-    <h1 class="chat-bar__title" id="chat-title">${escape(title)}</h1>
-    <div class="chat-bar__meta" id="chat-meta" aria-live="polite"></div>
+    <a class="chat-bar__home" href="/" title="chat.pencil.md">chat</a>
+    <h1 class="chat-bar__title${o.title ? "" : " is-empty"}" id="chat-title">${escape(o.title)}</h1>
+    <div class="chat-bar__meta" id="chat-meta">
+      <span class="chat-stat chat-stat--clock" id="chat-clock" tabindex="0" data-tip="Time left before this chat is deleted.">--:--</span>
+      <span class="chat-stat" id="chat-size" tabindex="0" data-tip="Space used out of 100 MB.">– MB</span>
+    </div>
     <div class="chat-bar__actions">
       <button class="chat-icon-btn" id="chat-people-btn" type="button" aria-expanded="false" aria-controls="chat-people" title="participants">${ICON_PEOPLE}<span id="chat-count">0</span></button>
       <button class="btn chat-share" id="chat-share" type="button" title="copy the chat link">${ICON_LINK}<span>copy link</span></button>
