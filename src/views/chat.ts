@@ -52,6 +52,7 @@ export function chatLandingPage(o: { pencilOrigin: string; chatOrigin: string })
     <h2 class="chat-home__h2">your chats on this device</h2>
     <ul class="chat-home__list" id="chat-recent-list"></ul>
   </section>
+  <div class="chat-home__folds">
   <details class="chat-home__fold">
     <summary>how it works</summary>
     <ul>
@@ -66,6 +67,7 @@ export function chatLandingPage(o: { pencilOrigin: string; chatOrigin: string })
     <summary>for agents</summary>
     <p>Add the MCP server <code>${escape(o.chatOrigin)}/mcp</code> — no sign-in needed. Tools: <code>create_chat</code>, <code>join_chat</code>, <code>read_chat_messages</code> (long-polls with <code>wait_seconds</code>), <code>send_chat_message</code>, <code>upload_chat_image</code>, <code>get_chat</code>. Or use the <a href="${escape(o.pencilOrigin)}/api#chat">HTTP API</a>.</p>
   </details>
+  </div>
   <footer class="chat-home__foot"><a href="${escape(o.pencilOrigin)}/about#chat">about</a> &middot; <a href="${escape(o.pencilOrigin)}/">pencil.md</a> &middot; <a href="${escape(o.pencilOrigin)}/api#chat">api</a></footer>
 </main>
 </body>

@@ -72,6 +72,11 @@ function mb(n: number): string {
   return v < 10 ? v.toFixed(1) : String(Math.round(v));
 }
 
+function clockOf(ms: number): string {
+  const left = Math.max(0, ms);
+  return `${String(Math.floor(left / 3_600_000)).padStart(2, "0")}:${String(Math.floor((left % 3_600_000) / 60_000)).padStart(2, "0")}`;
+}
+
 function timeLeft(ms: number): string {
   if (ms <= 0) return "any moment";
   const h = Math.floor(ms / 3_600_000);
@@ -180,7 +185,12 @@ function landing(): void {
   const list = $("chat-recent-list");
   live.sort((a, b) => b[1].expires_at - a[1].expires_at);
   list.innerHTML = live
-    .map(([slug, v]) => `<li><a href="/${esc(slug)}">${esc(v.title || slug)}</a><span>deletes in ${esc(timeLeft(v.expires_at - now))} if quiet</span></li>`)
+    .map(([slug, v]) => {
+      const left = v.expires_at - now;
+      const tip = `Deleted in ${timeLeft(left)} unless someone writes. Every new message resets it to 24 hours.`;
+      const name = v.title ? `<span class="chat-home__list-title">${esc(v.title)}</span>` : `<span class="chat-home__list-title is-untitled">untitled · ${esc(slug)}</span>`;
+      return `<li><a href="/${esc(slug)}">${name}<span class="chat-stat" data-tip="${esc(tip)}" aria-label="${esc(tip)}">${clockOf(left)}</span></a></li>`;
+    })
     .join("");
   $("chat-recent").hidden = false;
 }
@@ -308,7 +318,7 @@ function room(slug: string): void {
     const left = Math.max(0, info.expires_at - Date.now());
     const clock = $("chat-clock");
     const size = $("chat-size");
-    clock.textContent = `${String(Math.floor(left / 3_600_000)).padStart(2, "0")}:${String(Math.floor((left % 3_600_000) / 60_000)).padStart(2, "0")}`;
+    clock.textContent = clockOf(left);
     clock.dataset.tip = `Time left before this chat and everything in it is deleted (${timeLeft(left)}). Every new message resets it to 24 hours.`;
     size.textContent = `${mb(info.bytes)} / ${mb(info.max_bytes)} MB`;
     size.dataset.tip = `Space used by messages and images. A chat holds ${mb(info.max_bytes)} MB; past that, the oldest messages are erased to make room.`;
