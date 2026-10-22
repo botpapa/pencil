@@ -13,6 +13,13 @@
 // - When a new message would push the room past 100 MB, the oldest messages
 //   (and their images) are deleted until it fits.
 //
+// - The creator gets an owner token from create(). Only it — or the member
+//   who joined with it — can set a password or delete the chat (remove()
+//   wipes everything at once, like the alarm).
+// - With a password set, joining needs it and reading needs membership:
+//   messages, info and live events go only to members and the owner. People
+//   already in the chat keep their access when a password is added.
+//
 // Realtime goes out over hibernatable WebSockets (browsers) and a long-poll
 // on messages() (agents). Sending always goes through RPC so one code path
 // enforces the limits.
@@ -21,6 +28,7 @@ import { DurableObject } from "cloudflare:workers";
 import { customAlphabet } from "nanoid";
 import { renderMarkdown } from "../lib/markdown.js";
 import { normaliseAvatar } from "../lib/avatar.js";
+import { hashPassword, verifyPassword } from "../lib/password.js";
 import {
   CHAT_MAX_BYTES,
   CHAT_MAX_IMAGES_PER_MESSAGE,
@@ -68,6 +76,8 @@ export type ChatInfo = {
   oldest_seq: number;
   latest_seq: number;
   evicted: boolean;
+  locked: boolean; // password set
+  owner_member_id: string | null; // the participant who created the chat, once they joined
 };
 
 // Browsers get rendered HTML, API clients the markdown source — never both,
@@ -75,12 +85,30 @@ export type ChatInfo = {
 export type ChatFormat = "client" | "api";
 
 export type ChatErrorStatus = 400 | 401 | 403 | 404 | 409 | 413 | 429;
-export type ChatResult<T> = { ok: true; value: T } | { ok: false; status: ChatErrorStatus; error: string };
+// `password_required` marks refusals that the right password would lift, so
+// clients can tell them from "chat full" and friends.
+export type ChatFail = { ok: false; status: ChatErrorStatus; error: string; code?: "password_required" };
+export type ChatResult<T> = { ok: true; value: T } | ChatFail;
 
 export type UploadMeta = { name: string; mime: string; width: number; height: number; bytes: number };
 
-type RoomRow = { slug: string; title: string; created_at: number; last_message_at: number; bytes: number; evicted_through: number };
-type Attachment = { mid: string | null };
+type RoomRow = {
+  slug: string;
+  title: string;
+  created_at: number;
+  last_message_at: number;
+  bytes: number;
+  evicted_through: number;
+  owner_hash: string | null;
+  owner_member_id: string | null;
+  password_hash: string | null;
+};
+// owner: the socket authenticated with the owner token (creator not joined yet).
+type Attachment = { mid: string | null; owner?: boolean };
+type Access = { member: ChatMember | null; owner: boolean };
+
+const ROOM_COLS = "slug, title, created_at, last_message_at, bytes, evicted_through, owner_hash, owner_member_id, password_hash";
+const LOCKED = "this chat is password-protected — join it with the password";
 
 const memberIdGen = customAlphabet("23456789abcdefghijkmnpqrstuvwxyz", 10);
 const enc = new TextEncoder();
@@ -98,9 +126,12 @@ const MSG_WINDOW_MS = 10_000;
 const MSG_PER_WINDOW = 20;
 const UPLOAD_WINDOW_MS = 60_000;
 const UPLOAD_PER_WINDOW = 30;
+// Wrong passwords: 10 per client IP per 10 minutes.
+const PW_WINDOW_MS = 10 * 60_000;
+const PW_PER_WINDOW = 10;
 
-function fail(status: ChatErrorStatus, error: string): { ok: false; status: ChatErrorStatus; error: string } {
-  return { ok: false, status, error };
+function fail(status: ChatErrorStatus, error: string, code?: ChatFail["code"]): ChatFail {
+  return code ? { ok: false, status, error, code } : { ok: false, status, error };
 }
 
 async function sha256Hex(s: string): Promise<string> {
@@ -108,12 +139,12 @@ async function sha256Hex(s: string): Promise<string> {
   return [...new Uint8Array(d)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-function newToken(): string {
+function newToken(prefix = "pct_"): string {
   const b = new Uint8Array(24);
   crypto.getRandomValues(b);
   let s = "";
   for (const x of b) s += String.fromCharCode(x);
-  return "pct_" + btoa(s).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
+  return prefix + btoa(s).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
 }
 
 export function cleanNickname(v: unknown): string | null {
@@ -131,6 +162,7 @@ export class ChatRoom extends DurableObject<Bindings> {
   private waiters = new Set<() => void>();
   private msgHits = new Map<string, number[]>();
   private uploadHits = new Map<string, number[]>();
+  private passwordMisses = new Map<string, number[]>();
   private lastTyping = new Map<string, number>();
 
   constructor(ctx: DurableObjectState, env: Bindings) {
@@ -145,8 +177,18 @@ export class ChatRoom extends DurableObject<Bindings> {
   private load(): RoomRow | null {
     if (this.room !== undefined) return this.room;
     const has = this.sql.exec("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'room'").toArray().length > 0;
-    this.room = has ? ((this.sql.exec("SELECT slug, title, created_at, last_message_at, bytes, evicted_through FROM room WHERE id = 1").toArray()[0] as RoomRow | undefined) ?? null) : null;
+    if (has) this.migrate();
+    this.room = has ? ((this.sql.exec(`SELECT ${ROOM_COLS} FROM room WHERE id = 1`).toArray()[0] as RoomRow | undefined) ?? null) : null;
     return this.room;
+  }
+
+  // Rooms created before owners and passwords existed lack the columns; they
+  // get them empty (no owner, no password).
+  private migrate(): void {
+    const cols = new Set(this.sql.exec("PRAGMA table_info(room)").toArray().map((c) => String(c.name)));
+    for (const col of ["owner_hash", "owner_member_id", "password_hash"]) {
+      if (!cols.has(col)) this.sql.exec(`ALTER TABLE room ADD COLUMN ${col} TEXT`);
+    }
   }
 
   private memberCount(): number {
@@ -161,6 +203,21 @@ export class ChatRoom extends DurableObject<Bindings> {
     if (typeof token !== "string" || token.length < 8 || token.length > 128) return null;
     const hash = await sha256Hex(token);
     return (this.sql.exec("SELECT id, nickname, kind, pattern, hue, joined_at FROM members WHERE token_hash = ?", hash).toArray()[0] as ChatMember | undefined) ?? null;
+  }
+
+  // Who is this token: a member, the owner (by owner token, or as the member
+  // who joined with it), both, or nobody.
+  private async access(token: unknown): Promise<Access> {
+    if (typeof token !== "string" || token.length < 8 || token.length > 128) return { member: null, owner: false };
+    const r = this.load();
+    const hash = await sha256Hex(token);
+    const member = (this.sql.exec("SELECT id, nickname, kind, pattern, hue, joined_at FROM members WHERE token_hash = ?", hash).toArray()[0] as ChatMember | undefined) ?? null;
+    const owner = !!r && ((!!r.owner_hash && r.owner_hash === hash) || (!!member && member.id === r.owner_member_id));
+    return { member, owner };
+  }
+
+  private canRead(r: RoomRow, a: Access): boolean {
+    return !r.password_hash || !!a.member || a.owner;
   }
 
   private info(r: RoomRow): ChatInfo {
@@ -178,6 +235,8 @@ export class ChatRoom extends DurableObject<Bindings> {
       oldest_seq: Number(bounds.lo),
       latest_seq: Number(bounds.hi),
       evicted: r.evicted_through > 0,
+      locked: !!r.password_hash,
+      owner_member_id: r.owner_member_id,
     };
   }
 
@@ -209,13 +268,19 @@ export class ChatRoom extends DurableObject<Bindings> {
 
   // ---------- RPC: lifecycle ----------
 
-  async create(slug: string, title: string): Promise<ChatInfo | null> {
+  // Returns the owner token once; only its hash is stored.
+  async create(slug: string, title: string, password?: string): Promise<{ info: ChatInfo; ownerToken: string } | null> {
+    // Hash first: nothing may await between the "slug taken" check and the
+    // schema write.
+    const ownerToken = newToken("pco_");
+    const ownerHash = await sha256Hex(ownerToken);
+    const passwordHash = password ? await hashPassword(password) : null;
     if (this.load()) return null; // slug taken
     const now = Date.now();
     this.sql.exec(`
       CREATE TABLE room (id INTEGER PRIMARY KEY CHECK (id = 1), slug TEXT NOT NULL, title TEXT NOT NULL,
         created_at INTEGER NOT NULL, last_message_at INTEGER NOT NULL, bytes INTEGER NOT NULL DEFAULT 0,
-        evicted_through INTEGER NOT NULL DEFAULT 0);
+        evicted_through INTEGER NOT NULL DEFAULT 0, owner_hash TEXT, owner_member_id TEXT, password_hash TEXT);
       CREATE TABLE members (id TEXT PRIMARY KEY, token_hash TEXT NOT NULL UNIQUE, nickname TEXT NOT NULL,
         kind TEXT NOT NULL, pattern TEXT NOT NULL, hue INTEGER NOT NULL, joined_at INTEGER NOT NULL);
       CREATE TABLE messages (seq INTEGER PRIMARY KEY AUTOINCREMENT, type TEXT NOT NULL, member_id TEXT NOT NULL,
@@ -224,21 +289,24 @@ export class ChatRoom extends DurableObject<Bindings> {
         height INTEGER NOT NULL, bytes INTEGER NOT NULL, created_at INTEGER NOT NULL);
     `);
     this.sql.exec(
-      "INSERT INTO room (id, slug, title, created_at, last_message_at) VALUES (1, ?, ?, ?, ?)",
+      "INSERT INTO room (id, slug, title, created_at, last_message_at, owner_hash, password_hash) VALUES (1, ?, ?, ?, ?, ?, ?)",
       slug,
       title.slice(0, MAX_TITLE_LENGTH),
       now,
       now,
+      ownerHash,
+      passwordHash,
     );
     this.room = undefined;
     await this.ctx.storage.setAlarm(now + CHAT_TTL_MS);
-    return this.info(this.load()!);
+    return { info: this.info(this.load()!), ownerToken };
   }
 
-  async getInfo(): Promise<(ChatInfo & { members: ChatMember[]; online: string[] }) | null> {
+  async getInfo(token?: string): Promise<ChatResult<ChatInfo & { members: ChatMember[]; online: string[] }>> {
     const r = this.load();
-    if (!r) return null;
-    return { ...this.info(r), members: this.members(), online: this.online() };
+    if (!r) return fail(404, "chat not found (it may have expired)");
+    if (r.password_hash && !this.canRead(r, await this.access(token))) return fail(403, LOCKED, "password_required");
+    return { ok: true, value: { ...this.info(r), members: this.members(), online: this.online() } };
   }
 
   override async alarm(): Promise<void> {
@@ -249,19 +317,64 @@ export class ChatRoom extends DurableObject<Bindings> {
       await this.ctx.storage.setAlarm(due);
       return;
     }
+    await this.wipe(r, "expired");
+  }
+
+  // Delete the room for good: images, sockets, waiters, storage.
+  private async wipe(r: RoomRow, reason: "expired" | "deleted"): Promise<void> {
     await this.purgeImages(r.slug);
     for (const ws of this.ctx.getWebSockets()) {
       try {
-        ws.send(JSON.stringify({ type: "expired" }));
-        ws.close(4404, "chat expired");
+        ws.send(JSON.stringify({ type: reason }));
+        ws.close(4404, `chat ${reason}`);
       } catch {
         /* already gone */
       }
     }
+    this.room = null;
     for (const w of [...this.waiters]) w();
     await this.ctx.storage.deleteAlarm();
     await this.ctx.storage.deleteAll();
-    this.room = null;
+  }
+
+  // ---------- RPC: owner ----------
+
+  private async ownerCheck(token: string): Promise<ChatResult<RoomRow>> {
+    const r = this.load();
+    if (!r) return fail(404, "chat not found (it may have expired)");
+    const a = await this.access(token);
+    if (a.owner) return { ok: true, value: r };
+    return a.member ? fail(403, "only the chat's creator can do that") : fail(401, "invalid token — pass the owner_token from create_chat");
+  }
+
+  // Set (string) or remove (null) the password. Members keep their access;
+  // sockets that aren't members get a "locked" event and nothing after it.
+  async setPassword(token: string, password: string | null): Promise<ChatResult<ChatInfo>> {
+    const own = await this.ownerCheck(token);
+    if (!own.ok) return own;
+    const hash = password ? await hashPassword(password) : null;
+    this.sql.exec("UPDATE room SET password_hash = ? WHERE id = 1", hash);
+    this.room = undefined;
+    const info = this.info(this.load()!);
+    if (info.locked) {
+      for (const ws of this.ctx.getWebSockets()) {
+        if (this.socketCanRead(ws)) continue;
+        try {
+          ws.send(JSON.stringify({ type: "locked" }));
+        } catch {
+          /* closing socket */
+        }
+      }
+    }
+    this.broadcast({ type: "settings", info });
+    return { ok: true, value: info };
+  }
+
+  async remove(token: string): Promise<ChatResult<{ slug: string }>> {
+    const own = await this.ownerCheck(token);
+    if (!own.ok) return own;
+    await this.wipe(own.value, "deleted");
+    return { ok: true, value: { slug: own.value.slug } };
   }
 
   private async purgeImages(slug: string): Promise<void> {
@@ -276,15 +389,32 @@ export class ChatRoom extends DurableObject<Bindings> {
 
   // ---------- RPC: members ----------
 
-  async join(input: { nickname: unknown; kind?: unknown; avatar?: unknown }): Promise<ChatResult<{ token: string; member: ChatMember }>> {
+  // Joining with the owner token makes this member the chat's owner (and
+  // skips the password). `ip` keys the wrong-password limit.
+  async join(input: { nickname: unknown; kind?: unknown; avatar?: unknown; password?: unknown; ownerToken?: unknown; ip?: string }): Promise<ChatResult<{ token: string; member: ChatMember }>> {
     const r = this.load();
     if (!r) return fail(404, "chat not found (it may have expired)");
     const nickname = cleanNickname(input.nickname);
     if (!nickname) return fail(400, `nickname must be 1–${CHAT_MAX_NICKNAME} characters`);
+    const isOwner = typeof input.ownerToken === "string" && !!r.owner_hash && (await this.access(input.ownerToken)).owner;
+    if (r.password_hash && !isOwner) {
+      const pw = typeof input.password === "string" ? input.password : "";
+      if (!pw) return fail(403, LOCKED, "password_required");
+      const key = input.ip || "?";
+      const now = Date.now();
+      const misses = (this.passwordMisses.get(key) ?? []).filter((t) => now - t < PW_WINDOW_MS);
+      if (misses.length >= PW_PER_WINDOW) return fail(429, "too many wrong passwords, try again in a few minutes");
+      if (!(await verifyPassword(pw, r.password_hash))) {
+        misses.push(now);
+        this.passwordMisses.set(key, misses);
+        return fail(403, "wrong password", "password_required");
+      }
+    }
     // Hash before the capacity check: nothing may await between the count
     // and the insert, or concurrent joins could overshoot the cap.
     const token = newToken();
     const tokenHash = await sha256Hex(token);
+    if (!this.load()) return fail(404, "chat not found (it may have expired)");
     if (this.memberCount() >= CHAT_MAX_MEMBERS) return fail(403, `chat is full (${CHAT_MAX_MEMBERS} participants)`);
     const kind: ChatMember["kind"] = input.kind === "agent" ? "agent" : "human";
     const avatar = normaliseAvatar(input.avatar);
@@ -299,13 +429,17 @@ export class ChatRoom extends DurableObject<Bindings> {
       member.hue,
       member.joined_at,
     );
+    if (isOwner) {
+      this.sql.exec("UPDATE room SET owner_member_id = ? WHERE id = 1", member.id);
+      this.room = undefined;
+    }
     // A zero-byte "joined" line so everyone sees who came in. It doesn't
     // count as a message for the 24 h expiry.
     const row = this.sql
       .exec("INSERT INTO messages (type, member_id, text, html, images, bytes, created_at) VALUES ('join', ?, '', '', '[]', 0, ?) RETURNING *", member.id, member.joined_at)
       .one();
     this.broadcast({ type: "member", member });
-    this.broadcast({ type: "message", message: this.rowToMessage(row, "client"), info: this.info(r) });
+    this.broadcast({ type: "message", message: this.rowToMessage(row, "client"), info: this.info(this.load()!) });
     this.wake();
     return { ok: true, value: { token, member } };
   }
@@ -450,8 +584,11 @@ export class ChatRoom extends DurableObject<Bindings> {
   // History. `after` → ascending from after+1 (and, with waitMs, long-polls
   // until something arrives); `before` → the page just below it; neither →
   // the latest `limit` messages.
-  async messages(opts: { after?: number; before?: number; limit?: number; waitMs?: number; format?: ChatFormat }): Promise<ChatResult<{ messages: ChatMessage[]; info: ChatInfo; members: ChatMember[] }>> {
-    if (!this.load()) return fail(404, "chat not found (it may have expired)");
+  async messages(opts: { after?: number; before?: number; limit?: number; waitMs?: number; format?: ChatFormat; token?: string }): Promise<ChatResult<{ messages: ChatMessage[]; info: ChatInfo; members: ChatMember[] }>> {
+    const room = this.load();
+    if (!room) return fail(404, "chat not found (it may have expired)");
+    const who = room.password_hash || opts.token ? await this.access(opts.token) : { member: null, owner: false };
+    if (!this.canRead(room, who)) return fail(403, LOCKED, "password_required");
     const limit = Math.max(1, Math.min(MAX_PAGE, Math.floor(opts.limit ?? 100)));
     const format = opts.format ?? "api";
     const col = format === "client" ? "html" : "text";
@@ -492,6 +629,8 @@ export class ChatRoom extends DurableObject<Bindings> {
       });
       const r = this.load();
       if (!r) return fail(404, "chat not found (it may have expired)");
+      // The password may have been set while we waited.
+      if (!this.canRead(r, who)) return fail(403, LOCKED, "password_required");
       list = run();
     }
     return { ok: true, value: { messages: list, info: this.info(this.load()!), members: this.members() } };
@@ -528,9 +667,9 @@ export class ChatRoom extends DurableObject<Bindings> {
     }
     const att = (ws.deserializeAttachment() as Attachment | null) ?? { mid: null };
     if (msg.type === "auth") {
-      const m = await this.memberByToken(msg.token);
-      ws.serializeAttachment({ mid: m?.id ?? null } satisfies Attachment);
-      ws.send(JSON.stringify({ type: "auth", member_id: m?.id ?? null }));
+      const a = await this.access(msg.token);
+      ws.serializeAttachment({ mid: a.member?.id ?? null, owner: a.owner } satisfies Attachment);
+      ws.send(JSON.stringify({ type: "auth", member_id: a.member?.id ?? null, owner: a.owner }));
       this.broadcastPresence();
     } else if (msg.type === "typing" && att.mid) {
       const now = Date.now();
@@ -567,10 +706,17 @@ export class ChatRoom extends DurableObject<Bindings> {
     this.broadcast({ type: "presence", online: this.online(skip) }, skip);
   }
 
+  // In a password-protected chat, only members and the owner hear anything.
+  private socketCanRead(ws: WebSocket): boolean {
+    if (!this.load()?.password_hash) return true;
+    const a = ws.deserializeAttachment() as Attachment | null;
+    return !!a?.mid || !!a?.owner;
+  }
+
   private broadcast(event: Record<string, unknown>, skip?: WebSocket): void {
     const data = JSON.stringify(event);
     for (const ws of this.ctx.getWebSockets()) {
-      if (ws === skip) continue;
+      if (ws === skip || !this.socketCanRead(ws)) continue;
       try {
         ws.send(data);
       } catch {

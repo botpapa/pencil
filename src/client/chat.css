@@ -90,6 +90,15 @@
 .chat-dialog__form .chat-home__input { flex: none; font-size: 16px; }
 .chat-dialog__error { margin: 0; font-family: var(--font-mono); font-size: 12px; color: #B3261E; }
 .chat-dialog__buttons { display: flex; justify-content: flex-end; gap: 0.5rem; }
+
+/* room settings dialog (creator only) */
+#chat-settings { width: min(28rem, calc(100vw - 2rem)); }
+.chat-setting { background: var(--bg-soft); border-radius: 6px; padding: 0.8rem 0.9rem; display: flex; flex-direction: column; gap: 0.5rem; margin: 0; }
+.chat-setting__name { font-family: var(--font-mono); font-size: 12px; font-weight: 500; text-transform: lowercase; margin: 0; color: var(--ink); }
+.chat-setting__note { margin: 0; font-size: 0.9rem; color: var(--ink-soft); line-height: 1.4; }
+.chat-setting__row { display: flex; gap: 0.5rem; align-items: center; }
+.chat-setting__row .chat-home__input { flex: 1; min-width: 0; background: var(--bg); font-size: 16px; }
+.chat-setting__minor { align-self: flex-start; padding-left: 0; padding-right: 0; }
 .chat-home__list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.4rem; }
 .chat-home__list a {
   display: flex;
@@ -207,6 +216,7 @@
   font-size: 12px;
   cursor: pointer;
 }
+.chat-icon-btn[hidden] { display: none; }
 .chat-icon-btn:hover { color: var(--ink); border-color: var(--rule); }
 .chat-icon-btn:disabled { opacity: 0.35; cursor: not-allowed; }
 .chat-icon-btn:disabled:hover { border-color: transparent; color: var(--ink-soft); }
@@ -407,6 +417,9 @@
   padding: 0.5rem 0.7rem;
 }
 .chat-join__input { font-family: var(--font-mono); font-size: 14px; }
+.chat-join__pass[hidden] { display: none; }
+.chat-stat--lock { display: inline-flex; align-items: center; color: var(--ink-soft); }
+.chat-stat--lock[hidden] { display: none; }
 .chat-join__input:focus, .chat-compose__text:focus { outline: none; border-color: var(--ink-soft); }
 
 .chat-compose__row { display: flex; gap: 0.35rem; align-items: flex-end; }
@@ -479,4 +492,6 @@ body.is-dropping .chat-log { outline: 2px dashed var(--accent); outline-offset: 
   .msg__text.prose { font-size: 16px; }
   .chat-compose__text { font-size: 16px; }
   .chat-jump { bottom: 7.5rem; }
+  .chat-join { flex-wrap: wrap; }
+  .chat-join__pass { order: 1; flex-basis: 100%; font-size: 16px; }
 }

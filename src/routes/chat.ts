@@ -8,6 +8,8 @@
 //   POST /api/chats                create (JSON)
 //   GET  /api/chats/:slug          info + members
 //   PATCH /api/chats/:slug         rename (Bearer member token)
+//   DELETE /api/chats/:slug        delete everything now (Bearer owner token)
+//   PUT  /api/chats/:slug/password set / remove the password (Bearer owner token)
 //   POST /api/chats/:slug/join     pick a nickname → member token
 //   GET  /api/chats/:slug/messages history / long-poll (?after=&wait=)
 //   POST /api/chats/:slug/messages send (Bearer member token)
@@ -15,7 +17,8 @@
 //   POST /mcp                      MCP server with the chat tools, no auth
 //
 // Reading is public to anyone with the link, like pages; writing needs the
-// member token handed out by join.
+// member token handed out by join. Once the creator sets a password, joining
+// needs it and reading needs a member (or owner) token.
 
 import { Hono, type Context } from "hono";
 import { cors } from "hono/cors";
@@ -24,11 +27,11 @@ import { ingestImage } from "../lib/image.js";
 import { isValidSlug } from "../lib/slug.js";
 import { normalizeTitle } from "../lib/http.js";
 import { chatLandingPage, chatRoomPage, chatNotFoundPage } from "../views/chat.js";
-import { roomFor, createChat, uploadChatImage, apiInfo, apiMember, apiMessage, apiImage, chatOriginFor } from "../chat/service.js";
+import { roomFor, createChat, chatPassword, uploadChatImage, apiInfo, apiMember, apiMessage, apiImage, chatOriginFor } from "../chat/service.js";
 import mcp from "./mcp.js";
 import { MAX_CONTENT_BYTES, MAX_IMAGE_BYTES } from "../types.js";
 import type { AppEnv } from "../types.js";
-import type { ChatErrorStatus, ChatMember } from "../chat/room.js";
+import type { ChatErrorStatus, ChatFail, ChatMember } from "../chat/room.js";
 
 const app = new Hono<AppEnv>();
 
@@ -46,7 +49,7 @@ app.use("*", async (c, next) => {
   );
 });
 
-app.use("/api/*", cors({ origin: "*", allowMethods: ["GET", "POST", "PATCH", "OPTIONS"], allowHeaders: ["Authorization", "Content-Type"], maxAge: 86400 }));
+app.use("/api/*", cors({ origin: "*", allowMethods: ["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"], allowHeaders: ["Authorization", "Content-Type"], maxAge: 86400 }));
 
 function chatOrigin(c: Context<AppEnv>): string {
   return chatOriginFor(new URL(c.req.url).origin);
@@ -65,6 +68,10 @@ function bearer(c: Context<AppEnv>, body?: Record<string, unknown>): string {
 
 function err(c: Context<AppEnv>, status: ChatErrorStatus | 411, error: string) {
   return c.json({ error }, status);
+}
+
+function fail(c: Context<AppEnv>, r: ChatFail) {
+  return c.json(r.code === "password_required" ? { error: r.error, password_required: true } : { error: r.error }, r.status);
 }
 
 async function readJson(c: Context<AppEnv>): Promise<Record<string, unknown> | null> {
@@ -91,8 +98,10 @@ app.post("/new", async (c) => {
   if (tooBig) return tooBig;
   // Chats start untitled; participants name them from inside the room.
   const form = await c.req.parseBody().catch(() => ({}) as Record<string, unknown>);
-  const info = await createChat(c.env, (form as Record<string, unknown>).title);
-  return c.redirect(`/${info.slug}`, 303);
+  const { info, ownerToken } = await createChat(c.env, (form as Record<string, unknown>).title);
+  // The fragment never reaches a server; the room client keeps the owner
+  // token in localStorage and strips it from the address bar.
+  return c.redirect(`/${info.slug}#own=${ownerToken}`, 303);
 });
 
 // The docs live on the main host.
@@ -104,16 +113,41 @@ app.post("/api/chats", async (c) => {
   const tooBig = rejectIfOversize(c, 16 * 1024);
   if (tooBig) return tooBig;
   const body = (await readJson(c)) ?? {};
-  const info = await createChat(c.env, body.title);
-  return c.json(apiInfo(chatOrigin(c), info), 201);
+  const pw = chatPassword(body.password);
+  if (!pw.ok) return err(c, 400, pw.error);
+  const { info, ownerToken } = await createChat(c.env, body.title, pw.value);
+  return c.json({ ...apiInfo(chatOrigin(c), info), owner_token: ownerToken }, 201);
 });
 
 app.get("/api/chats/:slug", async (c) => {
   const slug = c.req.param("slug");
   if (!isValidSlug(slug)) return err(c, 404, "chat not found");
-  const info = await roomFor(c.env, slug).getInfo();
-  if (!info) return err(c, 404, "chat not found (it may have expired)");
+  const r = await roomFor(c.env, slug).getInfo(bearer(c));
+  if (!r.ok) return fail(c, r);
+  const info = r.value;
   return c.json({ ...apiInfo(chatOrigin(c), info), members: info.members.map(apiMember), online: info.online });
+});
+
+app.delete("/api/chats/:slug", async (c) => {
+  const slug = c.req.param("slug");
+  if (!isValidSlug(slug)) return err(c, 404, "chat not found");
+  const r = await roomFor(c.env, slug).remove(bearer(c));
+  if (!r.ok) return fail(c, r);
+  return c.json({ deleted: true, slug });
+});
+
+app.put("/api/chats/:slug/password", async (c) => {
+  const slug = c.req.param("slug");
+  if (!isValidSlug(slug)) return err(c, 404, "chat not found");
+  const tooBig = rejectIfOversize(c, 4 * 1024);
+  if (tooBig) return tooBig;
+  const body = await readJson(c);
+  if (!body) return err(c, 400, "invalid JSON");
+  const pw = chatPassword(body.password);
+  if (!pw.ok) return err(c, 400, pw.error);
+  const r = await roomFor(c.env, slug).setPassword(bearer(c, body), pw.value);
+  if (!r.ok) return fail(c, r);
+  return c.json(apiInfo(chatOrigin(c), r.value));
 });
 
 app.patch("/api/chats/:slug", async (c) => {
@@ -136,8 +170,15 @@ app.post("/api/chats/:slug/join", async (c) => {
   if (tooBig) return tooBig;
   const body = await readJson(c);
   if (!body) return err(c, 400, "invalid JSON");
-  const r = await roomFor(c.env, slug).join({ nickname: body.nickname, kind: body.kind, avatar: body.avatar });
-  if (!r.ok) return err(c, r.status, r.error);
+  const r = await roomFor(c.env, slug).join({
+    nickname: body.nickname,
+    kind: body.kind,
+    avatar: body.avatar,
+    password: body.password,
+    ownerToken: body.owner_token,
+    ip: c.req.header("CF-Connecting-IP") ?? "",
+  });
+  if (!r.ok) return fail(c, r);
   return c.json({ member_token: r.value.token, member: apiMember(r.value.member) }, 201);
 });
 
@@ -159,8 +200,8 @@ app.get("/api/chats/:slug/messages", async (c) => {
   const limit = intParam(c.req.query("limit"));
   const wait = intParam(c.req.query("wait"));
   const format = c.req.query("format") === "client" ? "client" : "api";
-  const r = await roomFor(c.env, slug).messages({ after, before, limit, format, waitMs: wait !== undefined ? wait * 1000 : undefined });
-  if (!r.ok) return err(c, r.status, r.error);
+  const r = await roomFor(c.env, slug).messages({ after, before, limit, format, token: bearer(c), waitMs: wait !== undefined ? wait * 1000 : undefined });
+  if (!r.ok) return fail(c, r);
   const origin = chatOrigin(c);
   const byId = new Map<string, ChatMember>(r.value.members.map((m) => [m.id, m]));
   // `format=client` keeps the room's internal shape (paths + rendered HTML) for
@@ -252,8 +293,9 @@ app.get("/:slug", async (c) => {
   const slug = c.req.param("slug");
   if (!isValidSlug(slug)) return c.html(chatNotFoundPage(pencilOrigin(c)), 404);
   const info = await roomFor(c.env, slug).getInfo();
-  if (!info) return c.html(chatNotFoundPage(pencilOrigin(c)), 404);
-  return c.html(chatRoomPage({ slug, title: info.title, url: `${chatOrigin(c)}/${slug}`, pencilOrigin: pencilOrigin(c) }), 200, {
+  if (!info.ok && info.status === 404) return c.html(chatNotFoundPage(pencilOrigin(c)), 404);
+  // A password-protected chat doesn't put its title in the page.
+  return c.html(chatRoomPage({ slug, title: info.ok ? info.value.title : "", url: `${chatOrigin(c)}/${slug}`, pencilOrigin: pencilOrigin(c) }), 200, {
     "Cache-Control": "no-store",
   });
 });

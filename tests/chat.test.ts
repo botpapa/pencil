@@ -51,8 +51,9 @@ describe("chat — rooms", () => {
     const res = await SELF.fetch(`${CHAT}/new`, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: "", redirect: "manual" });
     expect(res.status).toBe(303);
     const loc = res.headers.get("Location")!;
-    expect(loc).toMatch(/^\/[A-Za-z0-9]{8}$/);
-    const room = await SELF.fetch(`${CHAT}${loc}`);
+    // The owner token rides in the fragment, which never reaches a server.
+    expect(loc).toMatch(/^\/[A-Za-z0-9]{8}#own=pco_[A-Za-z0-9_-]+$/);
+    const room = await SELF.fetch(`${CHAT}${loc.split("#")[0]}`);
     expect(room.status).toBe(200);
     const html = await room.text();
     expect(html).toContain('data-page="room"');
@@ -198,6 +199,116 @@ describe("chat — rooms", () => {
     expect(after.chat.bytes).toBeLessThan(100 * 1024 * 1024);
   });
 
+  it("only the creator sets a password; it gates joining and reading", async () => {
+    const res = await SELF.fetch(`${CHAT}/api/chats`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title: "secret" }) });
+    const created = await json<{ slug: string; owner_token: string; password_protected: boolean }>(res);
+    expect(created.owner_token).toMatch(/^pco_/);
+    expect(created.password_protected).toBe(false);
+    const slug = created.slug;
+    const owner = created.owner_token;
+    const early = await token(slug, "early");
+    const setPw = (password: unknown, auth: string) =>
+      SELF.fetch(`${CHAT}/api/chats/${slug}/password`, { method: "PUT", headers: { "Content-Type": "application/json", Authorization: `Bearer ${auth}` }, body: JSON.stringify({ password }) });
+
+    expect((await setPw("hunter2", early)).status).toBe(403); // a member, not the creator
+    expect((await setPw("hunter2", "pco_nope_nope")).status).toBe(401);
+    expect((await setPw(5, owner)).status).toBe(400);
+    const set = await setPw("hunter2", owner);
+    expect(set.status).toBe(200);
+    expect((await json<{ password_protected: boolean }>(set)).password_protected).toBe(true);
+
+    // Strangers can't read, see the info or join without the password…
+    const anon = await SELF.fetch(`${CHAT}/api/chats/${slug}/messages`);
+    expect(anon.status).toBe(403);
+    expect(await json(anon)).toMatchObject({ password_required: true });
+    expect((await SELF.fetch(`${CHAT}/api/chats/${slug}`)).status).toBe(403);
+    const page = await SELF.fetch(`${CHAT}/${slug}`);
+    expect(page.status).toBe(200);
+    expect(await page.text()).not.toContain("secret");
+    expect((await join(slug, "nopw")).status).toBe(403);
+    const wrong = await join(slug, "wrong", { password: "nope" });
+    expect(wrong.status).toBe(403);
+    expect(await json(wrong)).toMatchObject({ error: "wrong password", password_required: true });
+
+    // …with it they're in; earlier members and the owner token keep reading.
+    const late = await join(slug, "late", { password: "hunter2" });
+    expect(late.status).toBe(201);
+    const lateTok = (await json<{ member_token: string }>(late)).member_token;
+    expect((await send(slug, lateTok, { text: "hi" })).status).toBe(201);
+    for (const t of [early, lateTok, owner]) {
+      expect((await SELF.fetch(`${CHAT}/api/chats/${slug}/messages`, { headers: { Authorization: `Bearer ${t}` } })).status).toBe(200);
+    }
+
+    // The creator joins with the owner token: no password, and that member
+    // can manage the chat too.
+    const boss = await join(slug, "boss", { owner_token: owner });
+    expect(boss.status).toBe(201);
+    const bossJ = await json<{ member_token: string; member: { id: string } }>(boss);
+    const info = await json<{ owner_member_id: string }>(await SELF.fetch(`${CHAT}/api/chats/${slug}`, { headers: { Authorization: `Bearer ${early}` } }));
+    expect(info.owner_member_id).toBe(bossJ.member.id);
+
+    expect((await setPw(null, bossJ.member_token)).status).toBe(200);
+    expect((await SELF.fetch(`${CHAT}/api/chats/${slug}/messages`)).status).toBe(200);
+    expect((await join(slug, "open")).status).toBe(201);
+  });
+
+  it("stops live events to strangers once a password is set", async () => {
+    const res = await SELF.fetch(`${CHAT}/api/chats`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+    const { slug, owner_token } = await json<{ slug: string; owner_token: string }>(res);
+    const t = await token(slug, "ann");
+    const open = async (auth?: string) => {
+      const r = await SELF.fetch(`${CHAT}/${slug}/ws`, { headers: { Upgrade: "websocket" } });
+      const ws = r.webSocket!;
+      const got: { type: string }[] = [];
+      ws.accept();
+      ws.addEventListener("message", (e) => got.push(JSON.parse(String(e.data)) as { type: string }));
+      if (auth) ws.send(JSON.stringify({ type: "auth", token: auth }));
+      return { ws, got };
+    };
+    const tick = () => new Promise((r) => setTimeout(r, 50));
+    const member = await open(t);
+    const stranger = await open();
+    await tick();
+    await SELF.fetch(`${CHAT}/api/chats/${slug}/password`, { method: "PUT", headers: { "Content-Type": "application/json", Authorization: `Bearer ${owner_token}` }, body: JSON.stringify({ password: "pw" }) });
+    await send(slug, t, { text: "private" });
+    await tick();
+    expect(stranger.got.map((e) => e.type)).toContain("locked");
+    expect(stranger.got.some((e) => e.type === "message")).toBe(false);
+    expect(member.got.some((e) => e.type === "message")).toBe(true);
+    await SELF.fetch(`${CHAT}/api/chats/${slug}`, { method: "DELETE", headers: { Authorization: `Bearer ${owner_token}` } });
+    await tick();
+    expect(member.got.at(-1)?.type).toBe("deleted");
+    expect(stranger.got.at(-1)?.type).toBe("deleted");
+  });
+
+  it("limits wrong password attempts", async () => {
+    const res = await SELF.fetch(`${CHAT}/api/chats`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ password: "right" }) });
+    const { slug } = await json<{ slug: string; password_protected: boolean }>(res);
+    for (let i = 0; i < 10; i++) expect((await join(slug, "x", { password: `bad${i}` })).status).toBe(403);
+    expect((await join(slug, "x", { password: "bad" })).status).toBe(429);
+  });
+
+  it("lets only the creator delete a chat with all its history", async () => {
+    const res = await SELF.fetch(`${CHAT}/api/chats`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+    const { slug, owner_token } = await json<{ slug: string; owner_token: string }>(res);
+    const t = await token(slug, "ann");
+    const up = await json<{ id: string }>(
+      await SELF.fetch(`${CHAT}/api/chats/${slug}/images`, { method: "POST", headers: { "Content-Type": "image/png", Authorization: `Bearer ${t}` }, body: PNG }),
+    );
+    await send(slug, t, { text: "bye", images: [up.id] });
+    const del = (auth: string) => SELF.fetch(`${CHAT}/api/chats/${slug}`, { method: "DELETE", headers: { Authorization: `Bearer ${auth}` } });
+    expect((await del(t)).status).toBe(403);
+    expect((await del("")).status).toBe(401);
+    const ok = await del(owner_token);
+    expect(ok.status).toBe(200);
+    expect(await json(ok)).toEqual({ deleted: true, slug });
+    expect((await SELF.fetch(`${CHAT}/api/chats/${slug}`)).status).toBe(404);
+    expect((await SELF.fetch(`${CHAT}/${slug}`)).status).toBe(404);
+    expect((await SELF.fetch(`${CHAT}/${slug}/img/${up.id}`)).status).toBe(404);
+    expect((await env.IMAGES.list({ prefix: `chat/${slug}/` })).objects).toEqual([]);
+    expect((await del(owner_token)).status).toBe(404);
+  });
+
   it("deletes everything 24 h after the last message", async () => {
     const slug = await createChat();
     const t = await token(slug, "gus");
@@ -238,7 +349,7 @@ describe("chat — MCP", () => {
     expect(String(init.result.instructions)).toContain("join_chat");
     const list = await rpc("tools/list");
     const names = (list.result.tools as { name: string }[]).map((t) => t.name).sort();
-    expect(names).toEqual(["create_chat", "get_chat", "join_chat", "read_chat_messages", "send_chat_message", "upload_chat_image"]);
+    expect(names).toEqual(["create_chat", "delete_chat", "get_chat", "join_chat", "read_chat_messages", "send_chat_message", "set_chat_password", "upload_chat_image"]);
   });
 
   it("lets two agents talk", async () => {
@@ -256,6 +367,25 @@ describe("chat — MCP", () => {
     expect((more.result.structuredContent!.messages as { text: string }[]).map((m) => m.text)).toEqual(["hi alpha"]);
     const bad = await rpc("tools/call", { name: "send_chat_message", arguments: { chat: url, member_token: "pct_wrong_token", text: "x" } });
     expect(bad.result.isError).toBe(true);
+  });
+
+  it("creates a password-protected chat, then unlocks and deletes it", async () => {
+    const call = (name: string, args: Record<string, unknown>) => rpc("tools/call", { name, arguments: args });
+    const created = (await call("create_chat", { title: "vault", password: "pw" })).result.structuredContent!;
+    const url = created.url as string;
+    const owner = created.owner_token as string;
+    expect(created.password_protected).toBe(true);
+    expect((await call("join_chat", { chat: url, nickname: "x" })).result.isError).toBe(true);
+    const member = (await call("join_chat", { chat: url, nickname: "y", password: "pw" })).result.structuredContent!.member_token as string;
+    expect((await call("read_chat_messages", { chat: url })).result.isError).toBe(true);
+    expect((await call("read_chat_messages", { chat: url, member_token: member })).result.isError).toBe(false);
+    expect((await call("get_chat", { chat: url, member_token: member })).result.content![0]!.text).toContain("password-protected");
+    expect((await call("set_chat_password", { chat: url, owner_token: member, password: "" })).result.isError).toBe(true);
+    expect((await call("set_chat_password", { chat: url, owner_token: owner, password: "" })).result.isError).toBe(false);
+    expect((await call("read_chat_messages", { chat: url })).result.isError).toBe(false);
+    expect((await call("delete_chat", { chat: url, owner_token: member })).result.isError).toBe(true);
+    expect((await call("delete_chat", { chat: url, owner_token: owner })).result.isError).toBe(false);
+    expect((await call("get_chat", { chat: url })).result.isError).toBe(true);
   });
 
   it("main pencil.md MCP still requires OAuth", async () => {

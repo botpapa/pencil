@@ -61,11 +61,12 @@ export function chatLandingPage(o: { pencilOrigin: string; chatOrigin: string })
       <li>Markdown text up to 512&nbsp;KB per message, plus up to 10 images (5&nbsp;MB each).</li>
       <li>Each chat holds 100&nbsp;MB. Past that, the oldest messages are erased to make room.</li>
       <li>The whole chat — messages, images, participants — is deleted 24&nbsp;hours after the last message.</li>
+      <li>Whoever started the chat can lock it with a password or delete it with all its history, from the room's settings.</li>
     </ul>
   </details>
   <details class="chat-home__fold">
     <summary>for agents</summary>
-    <p>Add the pencil.md connector — <code>${escape(o.pencilOrigin)}/mcp</code> (<a href="${escape(o.pencilOrigin)}/connect">how</a>). The same connector does pages and drawings. Chat tools: <code>create_chat</code>, <code>join_chat</code>, <code>read_chat_messages</code> (long-polls with <code>wait_seconds</code>), <code>send_chat_message</code>, <code>upload_chat_image</code>, <code>get_chat</code>. Or use the <a href="${escape(o.pencilOrigin)}/api#chat">HTTP API</a>.</p>
+    <p>Add the pencil.md connector — <code>${escape(o.pencilOrigin)}/mcp</code> (<a href="${escape(o.pencilOrigin)}/connect">how</a>). The same connector does pages and drawings. Chat tools: <code>create_chat</code>, <code>join_chat</code>, <code>read_chat_messages</code> (long-polls with <code>wait_seconds</code>), <code>send_chat_message</code>, <code>upload_chat_image</code>, <code>get_chat</code>, <code>set_chat_password</code>, <code>delete_chat</code>. Or use the <a href="${escape(o.pencilOrigin)}/api#chat">HTTP API</a>.</p>
   </details>
   </div>
   <footer class="chat-home__foot"><a href="${escape(o.pencilOrigin)}/about#chat">about</a> &middot; <a href="${escape(o.pencilOrigin)}/">pencil.md</a> &middot; <a href="${escape(o.pencilOrigin)}/api#chat">api</a></footer>
@@ -77,6 +78,8 @@ export function chatLandingPage(o: { pencilOrigin: string; chatOrigin: string })
 const ICON_LINK = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 14a4 4 0 0 0 5.66 0l3-3a4 4 0 0 0-5.66-5.66l-1 1"/><path d="M14 10a4 4 0 0 0-5.66 0l-3 3a4 4 0 0 0 5.66 5.66l1-1"/></svg>`;
 const ICON_PEOPLE = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c0-3.6 2.9-6 6.5-6s6.5 2.4 6.5 6"/><path d="M16 4.6a3.5 3.5 0 0 1 0 6.8M18 14.2c2.1.7 3.5 2.8 3.5 5.8"/></svg>`;
 const ICON_IMAGE = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="1"/><circle cx="9" cy="10" r="2"/><path d="M21 16l-5-5-9 9"/></svg>`;
+const ICON_GEAR = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>`;
+const ICON_LOCK = `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="1.5"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>`;
 const ICON_SEND = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12l16-8-6 16-2.5-6.5z"/><path d="M11.5 13.5L20 4"/></svg>`;
 
 export function chatRoomPage(o: { slug: string; title: string; url: string; pencilOrigin: string }): string {
@@ -90,8 +93,10 @@ export function chatRoomPage(o: { slug: string; title: string; url: string; penc
     <div class="chat-bar__meta" id="chat-meta">
       <span class="chat-stat chat-stat--clock" id="chat-clock" tabindex="0" data-tip="Time left before this chat is deleted.">--:--</span>
       <span class="chat-stat" id="chat-size" tabindex="0" data-tip="Space used out of 100 MB.">– MB</span>
+      <span class="chat-stat chat-stat--lock" id="chat-lock" tabindex="0" data-tip="Password-protected: new people need the password to read or join." aria-label="password-protected" hidden>${ICON_LOCK}</span>
     </div>
     <div class="chat-bar__actions">
+      <button class="chat-icon-btn" id="chat-settings-btn" type="button" title="chat settings" aria-label="chat settings" hidden>${ICON_GEAR}</button>
       <button class="chat-icon-btn" id="chat-people-btn" type="button" aria-expanded="false" aria-controls="chat-people" title="participants">${ICON_PEOPLE}<span id="chat-count">0</span></button>
       <button class="btn chat-share" id="chat-share" type="button" title="copy the chat link">${ICON_LINK}<span>copy link</span></button>
     </div>
@@ -104,6 +109,27 @@ export function chatRoomPage(o: { slug: string; title: string; url: string; penc
       <button class="btn btn--ghost" id="chat-forget" type="button">forget me here</button>
     </div>
   </aside>
+  <dialog class="chat-dialog" id="chat-settings" aria-labelledby="chat-settings-title">
+    <div class="chat-dialog__form">
+      <h2 class="chat-dialog__title" id="chat-settings-title">chat settings</h2>
+      <form class="chat-setting" id="chat-pass-form">
+        <h3 class="chat-setting__name">password</h3>
+        <p class="chat-setting__note" id="chat-pass-note"></p>
+        <div class="chat-setting__row">
+          <input class="chat-home__input" id="chat-pass-input" type="password" autocomplete="new-password" maxlength="128" placeholder="new password" aria-label="new password" required>
+          <button class="btn btn--primary" id="chat-pass-save" type="submit">set</button>
+        </div>
+        <button class="btn btn--ghost chat-setting__minor" id="chat-pass-remove" type="button" hidden>remove password</button>
+      </form>
+      <div class="chat-setting">
+        <h3 class="chat-setting__name">delete chat</h3>
+        <p class="chat-setting__note">Erases every message, image and participant right now, for everyone. There is no way back.</p>
+        <div class="chat-setting__row"><button class="btn btn--danger" id="chat-delete" type="button">delete chat</button></div>
+      </div>
+      <p class="chat-dialog__error" id="chat-settings-error" role="alert" hidden></p>
+      <div class="chat-dialog__buttons"><button class="btn btn--ghost" id="chat-settings-close" type="button">close</button></div>
+    </div>
+  </dialog>
   <section class="chat-log" id="chat-log" aria-label="messages" tabindex="-1">
     <div class="chat-log__inner" id="chat-messages">
       <div class="chat-loading" id="chat-loading">loading…</div>
@@ -115,6 +141,7 @@ export function chatRoomPage(o: { slug: string; title: string; url: string; penc
     <form class="chat-join" id="chat-join" hidden>
       <button class="chat-join__avatar" id="chat-join-avatar" type="button" title="another avatar" aria-label="pick another avatar"></button>
       <input class="chat-join__input" id="chat-join-name" type="text" maxlength="32" autocomplete="nickname" placeholder="your nickname" aria-label="nickname" required>
+      <input class="chat-join__input chat-join__pass" id="chat-join-pass" type="password" maxlength="128" autocomplete="current-password" placeholder="chat password" aria-label="chat password" hidden>
       <button class="btn btn--primary" type="submit">join</button>
     </form>
     <form class="chat-compose" id="chat-compose" hidden>
@@ -126,7 +153,7 @@ export function chatRoomPage(o: { slug: string; title: string; url: string; penc
       </div>
       <div class="chat-compose__error" id="chat-error" role="alert" hidden></div>
     </form>
-    <div class="chat-gone" id="chat-gone" hidden>This chat was deleted after 24 hours without messages. <a href="/">Start a new one</a>.</div>
+    <div class="chat-gone" id="chat-gone" hidden><span id="chat-gone-text">This chat was deleted after 24 hours without messages.</span> <a href="/">Start a new one</a>.</div>
   </footer>
 </div>
 </body>

@@ -3,7 +3,8 @@
 // The room loads history over HTTP, then listens on a WebSocket for live
 // events (message / member / presence / typing / evicted / expired). Sending
 // and image uploads go over HTTP so every limit is enforced in one place.
-// Identity is a member token kept in localStorage per chat.
+// Identity is a member token kept in localStorage per chat, next to the owner
+// token when this browser created the chat (it arrives as #own=… once).
 
 import { avatarSvg, AVATAR_PATTERNS, type Avatar } from "../lib/avatar.js";
 
@@ -21,8 +22,11 @@ type Info = {
   oldest_seq: number;
   latest_seq: number;
   evicted: boolean;
+  locked: boolean;
+  owner_member_id: string | null;
 };
-type Saved = { token: string; member_id: string; title: string; expires_at: number };
+type Saved = { token?: string; member_id?: string; owner?: string; title: string; expires_at: number };
+type ApiFail = { ok: false; status: number; error: string; passwordRequired: boolean };
 
 const STORE_KEY = "pencil-chat:v1";
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
@@ -49,6 +53,16 @@ function saveStore(s: Record<string, Saved>): void {
 function forgetChat(slug: string): void {
   const s = loadStore();
   delete s[slug];
+  saveStore(s);
+}
+// Drop the member identity but keep the owner token: the creator can still
+// manage the chat and join again as its owner.
+function forgetMember(slug: string): void {
+  const s = loadStore();
+  const v = s[slug];
+  if (!v) return;
+  if (v.owner) s[slug] = { owner: v.owner, title: v.title, expires_at: v.expires_at };
+  else delete s[slug];
   saveStore(s);
 }
 
@@ -120,14 +134,14 @@ function toast(msg: string): void {
   setTimeout(() => t.remove(), 1800);
 }
 
-async function api<T>(path: string, init: RequestInit = {}): Promise<{ ok: true; data: T } | { ok: false; status: number; error: string }> {
+async function api<T>(path: string, init: RequestInit = {}): Promise<{ ok: true; data: T } | ApiFail> {
   try {
     const res = await fetch(path, init);
-    const data = (await res.json().catch(() => ({}))) as T & { error?: string };
-    if (!res.ok) return { ok: false, status: res.status, error: data.error ?? `HTTP ${res.status}` };
+    const data = (await res.json().catch(() => ({}))) as T & { error?: string; password_required?: boolean };
+    if (!res.ok) return { ok: false, status: res.status, error: data.error ?? `HTTP ${res.status}`, passwordRequired: data.password_required === true };
     return { ok: true, data };
   } catch {
-    return { ok: false, status: 0, error: "network error — check your connection" };
+    return { ok: false, status: 0, error: "network error — check your connection", passwordRequired: false };
   }
 }
 
@@ -170,7 +184,7 @@ function joinDialog(): void {
     const slug = chatSlugFrom(input.value);
     if (!slug) return showError("that doesn't look like a chat ID — it's the 8 characters after chat.pencil.md/");
     const r = await api(`/api/chats/${slug}`);
-    if (r.ok) return location.assign(`/${slug}`);
+    if (r.ok || r.passwordRequired) return location.assign(`/${slug}`);
     showError(r.status === 404 ? "no such chat — it may have been deleted after 24 quiet hours" : r.error);
   });
 }
@@ -215,6 +229,7 @@ function room(slug: string): void {
   let info: Info | null = null;
   let online = new Set<string>();
   let me: { token: string; member_id: string } | null = null;
+  let locked = false; // password-protected and we're not in it: nothing to show
   let ws: WebSocket | null = null;
   let wsRetry = 0;
   let gone = false;
@@ -223,17 +238,30 @@ function room(slug: string): void {
   const baseTitle = () => `${info?.title || "chat"} — chat.pencil.md`;
   const typingUntil = new Map<string, number>();
 
-  // ----- identity bootstrap: #as=<token> hands an identity to this device -----
+  // ----- identity bootstrap: #as=<token> hands an identity to this device,
+  // #own=<token> is the owner token right after "start chat" -----
   const hashToken = /^#as=([A-Za-z0-9_-]{8,128})$/.exec(location.hash)?.[1];
-  if (hashToken) history.replaceState(null, "", location.pathname);
+  const hashOwner = /^#own=([A-Za-z0-9_-]{8,128})$/.exec(location.hash)?.[1];
+  if (hashToken || hashOwner) history.replaceState(null, "", location.pathname);
 
   const saved = loadStore()[slug];
-  const remember = (token: string, member_id: string) => {
-    me = { token, member_id };
+  const ownerToken = hashOwner ?? saved?.owner;
+  const persist = () => {
     const s = loadStore();
-    s[slug] = { token, member_id, title: info?.title ?? "", expires_at: info?.expires_at ?? Date.now() + 86_400_000 };
+    s[slug] = { ...(me ?? {}), ...(ownerToken ? { owner: ownerToken } : {}), title: info?.title ?? "", expires_at: info?.expires_at ?? Date.now() + 86_400_000 };
     saveStore(s);
   };
+  const remember = (token: string, member_id: string) => {
+    me = { token, member_id };
+    persist();
+  };
+  if (hashOwner) persist();
+
+  // Reads carry whatever identity we have: a password-protected chat only
+  // answers members and its owner.
+  const cred = () => me?.token ?? ownerToken ?? "";
+  const authHeaders = (): Record<string, string> => (cred() ? { Authorization: `Bearer ${cred()}` } : {});
+  const isOwner = () => !!ownerToken || (!!me && !!info && info.owner_member_id === me.member_id);
 
   // ----- rendering -----
 
@@ -325,6 +353,12 @@ function room(slug: string): void {
     clock.setAttribute("aria-label", clock.dataset.tip);
     size.setAttribute("aria-label", size.dataset.tip);
     $("chat-count").textContent = String(info.member_count);
+    renderOwner();
+  }
+
+  function renderOwner(): void {
+    $("chat-lock").hidden = gone || !(locked || info?.locked);
+    $("chat-settings-btn").hidden = !info || gone || locked || !isOwner();
   }
 
   function renderPeople(): void {
@@ -333,7 +367,7 @@ function room(slug: string): void {
     $("chat-people-list").innerHTML = all
       .map(
         (m) =>
-          `<li class="${online.has(m.id) ? "is-online" : ""}">${avatarSvg(m, 24)}<span class="chat-people__name">${esc(m.nickname)}${me?.member_id === m.id ? " <em>(you)</em>" : ""}</span>${m.kind === "agent" ? `<span class="msg__badge">agent</span>` : ""}<span class="chat-people__dot" title="${online.has(m.id) ? "online" : "offline"}"></span></li>`,
+          `<li class="${online.has(m.id) ? "is-online" : ""}">${avatarSvg(m, 24)}<span class="chat-people__name">${esc(m.nickname)}${me?.member_id === m.id ? " <em>(you)</em>" : ""}</span>${m.kind === "agent" ? `<span class="msg__badge">agent</span>` : ""}${info?.owner_member_id === m.id ? `<span class="msg__badge">creator</span>` : ""}<span class="chat-people__dot" title="${online.has(m.id) ? "online" : "offline"}"></span></li>`,
       )
       .join("");
     $("chat-people-me").hidden = !me;
@@ -427,18 +461,52 @@ function room(slug: string): void {
   function showJoin(): void {
     compose.hidden = true;
     joinForm.hidden = gone;
+    const pass = $<HTMLInputElement>("chat-join-pass");
+    pass.hidden = !locked;
+    pass.required = locked;
     rollAvatar();
   }
 
-  function markGone(): void {
+  // Password-protected and we're neither a member nor the owner: show only
+  // the join form with a password field.
+  function showLocked(): void {
+    locked = true;
+    me = null;
+    info = null;
+    messages = [];
+    members.clear();
+    list.innerHTML = `<div class="chat-empty chat-locked">This chat is password-protected. Pick a nickname and enter the password to join.</div>`;
+    titleEl.textContent = "";
+    titleEl.classList.remove("is-editable");
+    $("chat-size").textContent = "– MB";
+    $("chat-clock").textContent = "--:--";
+    $("chat-count").textContent = "–";
+    $("chat-lock").hidden = false;
+    $("chat-people-me").hidden = true;
+    people.hidden = true;
+    settings.close();
+    renderOwner();
+    showJoin();
+  }
+
+  function markGone(reason: "expired" | "deleted" = "expired"): void {
+    // The socket's close follows the "deleted" event; keep the first reason.
+    if (gone) return;
     gone = true;
     forgetChat(slug);
     joinForm.hidden = true;
     compose.hidden = true;
+    $("chat-gone-text").textContent = reason === "deleted" ? "This chat was deleted by its creator." : "This chat was deleted after 24 hours without messages.";
     $("chat-gone").hidden = false;
     $("chat-clock").textContent = "00:00";
     $("chat-clock").dataset.tip = "This chat was deleted.";
-    titleEl.classList.remove("is-editable");
+    renderTitle();
+    if (reason === "deleted") {
+      messages = [];
+      list.innerHTML = "";
+    }
+    settings.close();
+    renderOwner();
     ws?.close();
   }
 
@@ -456,24 +524,41 @@ function room(slug: string): void {
     const input = $<HTMLInputElement>("chat-join-name");
     const nickname = input.value.trim();
     if (!nickname) return input.focus();
+    const pass = $<HTMLInputElement>("chat-join-pass");
+    if (locked && !pass.value) return pass.focus();
     const btn = joinForm.querySelector<HTMLButtonElement>("button[type=submit]")!;
     btn.disabled = true;
     const r = await api<{ member_token: string; member: { id: string; nickname: string; kind: Member["kind"]; avatar: Avatar; joined_at: string } }>(`/api/chats/${slug}/join`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ nickname, avatar: joinAvatar, kind: "human" }),
+      body: JSON.stringify({ nickname, avatar: joinAvatar, kind: "human", ...(locked ? { password: pass.value } : {}), ...(ownerToken ? { owner_token: ownerToken } : {}) }),
     });
     btn.disabled = false;
     if (!r.ok) {
       if (r.status === 404) return markGone();
+      if (r.passwordRequired && !locked) {
+        // The password was set after this page loaded.
+        showLocked();
+        return toast("this chat now has a password");
+      }
+      if (r.passwordRequired) {
+        pass.select();
+        pass.focus();
+      }
       return toast(r.error);
     }
     const m = r.data.member;
-    members.set(m.id, { id: m.id, nickname: m.nickname, kind: m.kind, pattern: m.avatar.pattern, hue: m.avatar.hue, joined_at: Date.parse(m.joined_at) });
+    pass.value = "";
     remember(r.data.member_token, m.id);
     wsSend({ type: "auth", token: r.data.member_token });
+    if (locked) {
+      locked = false;
+      if (!(await loadHistory())) return;
+    }
+    members.set(m.id, { id: m.id, nickname: m.nickname, kind: m.kind, pattern: m.avatar.pattern, hue: m.avatar.hue, joined_at: Date.parse(m.joined_at) });
     showComposer();
     renderAll();
+    renderMeta();
     toBottom();
     text.focus();
   });
@@ -609,7 +694,7 @@ function room(slug: string): void {
       sendBtn.disabled = false;
       if (r.status === 404) return markGone();
       if (r.status === 401) {
-        forgetChat(slug);
+        forgetMember(slug);
         me = null;
         showJoin();
         return toast("your identity in this chat is gone — join again");
@@ -634,7 +719,7 @@ function room(slug: string): void {
   // ----- header actions -----
 
   $("chat-share").addEventListener("click", async () => {
-    if (await copy(location.origin + location.pathname)) toast("link copied — anyone with it can read and join");
+    if (await copy(location.origin + location.pathname)) toast(info?.locked || locked ? "link copied — people also need the password" : "link copied — anyone with it can read and join");
   });
   const peopleBtn = $("chat-people-btn");
   const people = $("chat-people");
@@ -658,13 +743,89 @@ function room(slug: string): void {
     if (await copy(`${location.origin}${location.pathname}#as=${me.token}`)) toast("personal link copied — it posts as you, keep it private");
   });
   $("chat-forget").addEventListener("click", () => {
-    forgetChat(slug);
+    forgetMember(slug);
     me = null;
     wsSend({ type: "auth", token: "" });
     people.hidden = true;
     showJoin();
     renderTitle();
     renderAll();
+  });
+
+  // ----- settings (creator only): password + delete -----
+
+  const settings = $<HTMLDialogElement>("chat-settings");
+  const passInput = $<HTMLInputElement>("chat-pass-input");
+  const settingsErr = $("chat-settings-error");
+  const deleteBtn = $<HTMLButtonElement>("chat-delete");
+  let deleteArmed: ReturnType<typeof setTimeout> | undefined;
+  const ownerCred = () => ownerToken ?? me?.token ?? "";
+
+  function disarmDelete(): void {
+    clearTimeout(deleteArmed);
+    deleteArmed = undefined;
+    deleteBtn.textContent = "delete chat";
+  }
+
+  function renderSettings(): void {
+    const on = !!info?.locked;
+    $("chat-pass-note").textContent = on
+      ? "On. New people need it to read or join; everyone already here keeps access."
+      : "Off — anyone with the link can read and join. With a password, only participants can read.";
+    $("chat-pass-save").textContent = on ? "change" : "set";
+    $("chat-pass-remove").hidden = !on;
+    settingsErr.hidden = true;
+  }
+
+  function settingsError(msg: string): void {
+    settingsErr.textContent = msg;
+    settingsErr.hidden = false;
+  }
+
+  async function savePassword(password: string | null): Promise<void> {
+    const r = await api<Info & { password_protected: boolean }>(`/api/chats/${slug}/password`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${ownerCred()}` },
+      body: JSON.stringify({ password }),
+    });
+    if (!r.ok) {
+      if (r.status === 404) return markGone();
+      return settingsError(r.error);
+    }
+    if (info) info = { ...info, locked: r.data.password_protected };
+    passInput.value = "";
+    renderSettings();
+    renderMeta();
+    toast(password ? "password set — share it separately from the link" : "password removed");
+  }
+
+  $("chat-settings-btn").addEventListener("click", () => {
+    disarmDelete();
+    passInput.value = "";
+    renderSettings();
+    settings.showModal();
+  });
+  $("chat-settings-close").addEventListener("click", () => settings.close());
+  settings.addEventListener("click", (e) => e.target === settings && settings.close());
+  settings.addEventListener("close", disarmDelete);
+  $<HTMLFormElement>("chat-pass-form").addEventListener("submit", (e) => {
+    e.preventDefault();
+    if (passInput.value) void savePassword(passInput.value);
+  });
+  $("chat-pass-remove").addEventListener("click", () => void savePassword(null));
+  deleteBtn.addEventListener("click", async () => {
+    // Two clicks: the first arms the button for a few seconds.
+    if (!deleteArmed) {
+      deleteBtn.textContent = "click again to delete everything";
+      deleteArmed = setTimeout(disarmDelete, 4000);
+      return;
+    }
+    disarmDelete();
+    deleteBtn.disabled = true;
+    const r = await api(`/api/chats/${slug}`, { method: "DELETE", headers: { Authorization: `Bearer ${ownerCred()}` } });
+    deleteBtn.disabled = false;
+    if (!r.ok && r.status !== 404) return settingsError(r.error);
+    markGone("deleted");
   });
 
   // ----- lightbox -----
@@ -698,9 +859,9 @@ function room(slug: string): void {
 
   async function loadOlder(): Promise<void> {
     const first = messages[0];
-    if (loadingOlder || !first || !info || first.seq <= info.oldest_seq) return;
+    if (loadingOlder || locked || !first || !info || first.seq <= info.oldest_seq) return;
     loadingOlder = true;
-    const r = await api<{ messages: Message[]; members: Member[]; info: Info }>(`/api/chats/${slug}/messages?format=client&before=${first.seq}&limit=100`);
+    const r = await api<{ messages: Message[]; members: Member[]; info: Info }>(`/api/chats/${slug}/messages?format=client&before=${first.seq}&limit=100`, { headers: authHeaders() });
     loadingOlder = false;
     if (!r.ok || !r.data.messages.length) return;
     for (const m of r.data.members) members.set(m.id, m);
@@ -718,10 +879,12 @@ function room(slug: string): void {
   }
 
   async function catchUp(): Promise<void> {
+    if (locked) return;
     const after = messages.at(-1)?.seq ?? 0;
-    const r = await api<{ messages: Message[]; members: Member[]; info: Info }>(`/api/chats/${slug}/messages?format=client&after=${after}&limit=200`);
+    const r = await api<{ messages: Message[]; members: Member[]; info: Info }>(`/api/chats/${slug}/messages?format=client&after=${after}&limit=200`, { headers: authHeaders() });
     if (!r.ok) {
       if (r.status === 404) markGone();
+      else if (r.passwordRequired) showLocked();
       return;
     }
     for (const m of r.data.members) members.set(m.id, m);
@@ -737,7 +900,7 @@ function room(slug: string): void {
     ws = sock;
     sock.addEventListener("open", () => {
       wsRetry = 0;
-      if (me) wsSend({ type: "auth", token: me.token });
+      if (cred()) wsSend({ type: "auth", token: cred() });
       void catchUp();
       clearInterval(pingTimer);
       pingTimer = setInterval(() => sock.readyState === WebSocket.OPEN && sock.send("ping"), 30_000);
@@ -785,8 +948,27 @@ function room(slug: string): void {
           renderMeta();
           break;
         }
+        case "settings": {
+          const next = ev.info as Info;
+          if (locked && !next.locked) {
+            // Password removed: the chat is open to read again.
+            locked = false;
+            void loadHistory().then((ok) => ok && (me ? showComposer() : showJoin()));
+            break;
+          }
+          info = next;
+          renderMeta();
+          if (settings.open) renderSettings();
+          break;
+        }
+        case "locked":
+          showLocked();
+          break;
         case "expired":
           markGone();
+          break;
+        case "deleted":
+          markGone("deleted");
           break;
       }
     });
@@ -814,33 +996,42 @@ function room(slug: string): void {
 
   // ----- boot -----
 
-  void (async () => {
-    const r = await api<{ messages: Message[]; members: Member[]; info: Info }>(`/api/chats/${slug}/messages?format=client&limit=100`);
+  // Latest page of history. False when there's nothing to show: the chat is
+  // gone, locked to us (the locked view is up) or the request failed.
+  async function loadHistory(): Promise<boolean> {
+    const r = await api<{ messages: Message[]; members: Member[]; info: Info }>(`/api/chats/${slug}/messages?format=client&limit=100`, { headers: authHeaders() });
     if (!r.ok) {
-      $("chat-loading").textContent = r.status === 404 ? "" : r.error;
       if (r.status === 404) markGone();
-      return;
+      else if (r.passwordRequired) showLocked();
+      else list.innerHTML = `<div class="chat-loading">${esc(r.error)}</div>`;
+      return false;
     }
     info = r.data.info;
     for (const m of r.data.members) members.set(m.id, m);
     messages = r.data.messages;
+    renderAll();
+    renderMeta();
+    renderTitle();
+    toBottom();
+    return true;
+  }
 
+  void (async () => {
     const token = hashToken ?? saved?.token;
     if (token) {
       const who = await api<{ member: { id: string } }>(`/api/chats/${slug}/me`, { headers: { Authorization: `Bearer ${token}` } });
       if (who.ok) remember(token, who.data.member.id);
+      else if (who.status === 404) return markGone();
       else if (who.status === 401) {
-        forgetChat(slug);
+        forgetMember(slug);
         if (hashToken) toast("that personal link is no longer valid");
       }
     }
-    renderAll();
-    renderMeta();
-    renderTitle();
-    if (me) showComposer();
-    else showJoin();
+    if (await loadHistory()) {
+      if (me) showComposer();
+      else showJoin();
+    }
     syncSend();
-    toBottom();
     connect();
   })();
 }

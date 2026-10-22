@@ -6,6 +6,7 @@ import { isValidSlug, newSlug } from "../lib/slug.js";
 import { sniffImage, type SniffedImage } from "../lib/image.js";
 import { normalizeTitle } from "../lib/http.js";
 import type { ChatImage, ChatInfo, ChatMember, ChatMessage, ChatResult } from "./room.js";
+import { MAX_PASSWORD_LENGTH } from "../types.js";
 import type { Bindings } from "../types.js";
 
 export function roomFor(env: Bindings, slug: string) {
@@ -37,12 +38,21 @@ export function parseChatRef(raw: string): string | null {
   return isValidSlug(s) ? s : null;
 }
 
-export async function createChat(env: Bindings, title: unknown): Promise<ChatInfo> {
+// A chat password: undefined/null/"" = none, otherwise 1–128 characters.
+export function chatPassword(v: unknown): { ok: true; value: string | null } | { ok: false; error: string } {
+  if (v === undefined || v === null || v === "") return { ok: true, value: null };
+  if (typeof v !== "string") return { ok: false, error: "password must be a string" };
+  if (v.length > MAX_PASSWORD_LENGTH) return { ok: false, error: `password must be at most ${MAX_PASSWORD_LENGTH} characters` };
+  return { ok: true, value: v };
+}
+
+// The owner token comes back once, here; only the creator holds it.
+export async function createChat(env: Bindings, title: unknown, password?: string | null): Promise<{ info: ChatInfo; ownerToken: string }> {
   const t = typeof title === "string" ? normalizeTitle(title) : "";
   for (let i = 0; i < 8; i++) {
     const slug = newSlug();
-    const info = await roomFor(env, slug).create(slug, t);
-    if (info) return info;
+    const created = await roomFor(env, slug).create(slug, t, password ?? undefined);
+    if (created) return created;
   }
   throw new Error("chat slug allocation failed");
 }
@@ -109,5 +119,7 @@ export function apiInfo(chatOrigin: string, i: ChatInfo) {
     latest_seq: i.latest_seq,
     oldest_seq: i.oldest_seq,
     older_messages_evicted: i.evicted,
+    password_protected: i.locked,
+    owner_member_id: i.owner_member_id,
   };
 }
