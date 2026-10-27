@@ -92,6 +92,8 @@ export const ALLOWED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "ima
 // one under the same 5 MB cap the editors use.
 export const CHAT_MAX_MEMBERS = 100;
 export const CHAT_MAX_BYTES = 100 * 1024 * 1024;
+// A persistent chat never expires, so it gets a tenth of the space.
+export const CHAT_PERSISTENT_MAX_BYTES = 10 * 1024 * 1024;
 export const CHAT_TTL_MS = 24 * 60 * 60 * 1000;
 export const CHAT_MAX_IMAGES_PER_MESSAGE = 10;
 export const CHAT_MAX_NICKNAME = 32;

@@ -99,6 +99,7 @@
 .chat-setting__row { display: flex; gap: 0.5rem; align-items: center; }
 .chat-setting__row .chat-home__input { flex: 1; min-width: 0; background: var(--bg); font-size: 16px; }
 .chat-setting__minor { align-self: flex-start; padding-left: 0; padding-right: 0; }
+.chat-setting__minor[hidden] { display: none; }
 .chat-home__list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.4rem; }
 .chat-home__list a {
   display: flex;

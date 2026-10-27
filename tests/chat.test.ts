@@ -309,6 +309,86 @@ describe("chat — rooms", () => {
     expect((await del(owner_token)).status).toBe(404);
   });
 
+  it("keeps a persistent chat for good under a 10 MB cap", async () => {
+    const res = await SELF.fetch(`${CHAT}/api/chats`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+    const { slug, owner_token, persistent, expires_at, max_bytes } = await json<{ slug: string; owner_token: string; persistent: boolean; expires_at: string | null; max_bytes: number }>(res);
+    expect(persistent).toBe(false);
+    expect(expires_at).not.toBeNull();
+    expect(max_bytes).toBe(100 * 1024 * 1024);
+    const t = await token(slug, "kai");
+    const stub = env.CHAT.get(env.CHAT.idFromName(slug));
+    const up = await json<{ id: string }>(
+      await SELF.fetch(`${CHAT}/api/chats/${slug}/images`, { method: "POST", headers: { "Content-Type": "image/png", Authorization: `Bearer ${t}` }, body: PNG }),
+    );
+    const first = await json<{ message: { seq: number } }>(await send(slug, t, { text: "old", images: [up.id] }));
+    await send(slug, t, { text: "recent" });
+    // The first message is 20 MB "big": over the persistent cap on its own.
+    await runInDurableObject(stub, async (obj: ChatRoom, state) => {
+      state.storage.sql.exec("UPDATE messages SET bytes = ? WHERE seq = ?", 20 * 1024 * 1024, first.message.seq);
+      state.storage.sql.exec("UPDATE room SET bytes = (SELECT SUM(bytes) FROM messages) WHERE id = 1");
+      (obj as unknown as { room: unknown }).room = undefined;
+    });
+
+    const keep = (on: unknown, auth: string) =>
+      SELF.fetch(`${CHAT}/api/chats/${slug}/persistent`, { method: "PUT", headers: { "Content-Type": "application/json", Authorization: `Bearer ${auth}` }, body: JSON.stringify({ persistent: on }) });
+    expect((await keep(true, t)).status).toBe(403);
+    expect((await keep("yes", owner_token)).status).toBe(400);
+    const on = await keep(true, owner_token);
+    expect(on.status).toBe(200);
+    const info = await json<{ persistent: boolean; expires_at: string | null; max_bytes: number; bytes: number; older_messages_evicted: boolean }>(on);
+    expect(info).toMatchObject({ persistent: true, expires_at: null, max_bytes: 10 * 1024 * 1024, older_messages_evicted: true });
+    expect(info.bytes).toBeLessThan(10 * 1024 * 1024);
+    const read = await json<{ messages: { text: string; type: string }[] }>(await SELF.fetch(`${CHAT}/api/chats/${slug}/messages`));
+    expect(read.messages.filter((m) => m.type === "message").map((m) => m.text)).toEqual(["recent"]);
+    // The evicted message's image goes with it.
+    await runInDurableObject(stub, async () => {});
+    expect((await env.IMAGES.list({ prefix: `chat/${slug}/` })).objects).toEqual([]);
+
+    // No alarm, and an "expired" last message doesn't delete it.
+    await runInDurableObject(stub, async (obj: ChatRoom, state) => {
+      expect(await state.storage.getAlarm()).toBeNull();
+      state.storage.sql.exec("UPDATE room SET last_message_at = ? WHERE id = 1", Date.now() - 30 * 24 * 3600 * 1000);
+      (obj as unknown as { room: unknown }).room = undefined;
+    });
+    expect(await runDurableObjectAlarm(stub)).toBe(false);
+    await send(slug, t, { text: "a month later" });
+    expect((await SELF.fetch(`${CHAT}/api/chats/${slug}`)).status).toBe(200);
+    await runInDurableObject(stub, async (_obj: ChatRoom, state) => {
+      expect(await state.storage.getAlarm()).toBeNull();
+    });
+
+    // Back to expiring: 24 h from now (not from the month-old message), 100 MB.
+    const off = await json<{ persistent: boolean; expires_at: string; max_bytes: number }>(await keep(false, owner_token));
+    expect(off.persistent).toBe(false);
+    expect(off.max_bytes).toBe(100 * 1024 * 1024);
+    expect(Date.parse(off.expires_at)).toBeGreaterThan(Date.now() + 23 * 3600 * 1000);
+    await runInDurableObject(stub, async (_obj: ChatRoom, state) => {
+      expect(await state.storage.getAlarm()).not.toBeNull();
+    });
+  });
+
+  it("can start persistent and sweeps stale unsent uploads", async () => {
+    const res = await SELF.fetch(`${CHAT}/api/chats`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ persistent: true }) });
+    const { slug, persistent, expires_at } = await json<{ slug: string; persistent: boolean; expires_at: string | null }>(res);
+    expect(persistent).toBe(true);
+    expect(expires_at).toBeNull();
+    const t = await token(slug, "lea");
+    const stub = env.CHAT.get(env.CHAT.idFromName(slug));
+    await runInDurableObject(stub, async (_obj: ChatRoom, state) => {
+      expect(await state.storage.getAlarm()).toBeNull();
+    });
+    const up = await json<{ id: string }>(
+      await SELF.fetch(`${CHAT}/api/chats/${slug}/images`, { method: "POST", headers: { "Content-Type": "image/png", Authorization: `Bearer ${t}` }, body: PNG }),
+    );
+    await runInDurableObject(stub, async (_obj: ChatRoom, state) => {
+      state.storage.sql.exec("UPDATE uploads SET created_at = ?", Date.now() - 25 * 3600 * 1000);
+    });
+    await send(slug, t, { text: "later" });
+    await runInDurableObject(stub, async () => {});
+    expect((await env.IMAGES.list({ prefix: `chat/${slug}/` })).objects).toEqual([]);
+    expect((await send(slug, t, { text: "x", images: [up.id] })).status).toBe(400);
+  });
+
   it("deletes everything 24 h after the last message", async () => {
     const slug = await createChat();
     const t = await token(slug, "gus");
@@ -349,7 +429,7 @@ describe("chat — MCP", () => {
     expect(String(init.result.instructions)).toContain("join_chat");
     const list = await rpc("tools/list");
     const names = (list.result.tools as { name: string }[]).map((t) => t.name).sort();
-    expect(names).toEqual(["create_chat", "delete_chat", "get_chat", "join_chat", "read_chat_messages", "send_chat_message", "set_chat_password", "upload_chat_image"]);
+    expect(names).toEqual(["create_chat", "delete_chat", "get_chat", "join_chat", "read_chat_messages", "send_chat_message", "set_chat_password", "set_chat_persistent", "upload_chat_image"]);
   });
 
   it("lets two agents talk", async () => {
@@ -383,6 +463,10 @@ describe("chat — MCP", () => {
     expect((await call("set_chat_password", { chat: url, owner_token: member, password: "" })).result.isError).toBe(true);
     expect((await call("set_chat_password", { chat: url, owner_token: owner, password: "" })).result.isError).toBe(false);
     expect((await call("read_chat_messages", { chat: url })).result.isError).toBe(false);
+    expect((await call("set_chat_persistent", { chat: url, owner_token: member, persistent: true })).result.isError).toBe(true);
+    const kept = await call("set_chat_persistent", { chat: url, owner_token: owner, persistent: true });
+    expect(kept.result.structuredContent).toMatchObject({ persistent: true, expires_at: null, max_bytes: 10 * 1024 * 1024 });
+    expect((await call("get_chat", { chat: url })).result.content![0]!.text).toContain("persistent (kept until deleted)");
     expect((await call("delete_chat", { chat: url, owner_token: member })).result.isError).toBe(true);
     expect((await call("delete_chat", { chat: url, owner_token: owner })).result.isError).toBe(false);
     expect((await call("get_chat", { chat: url })).result.isError).toBe(true);

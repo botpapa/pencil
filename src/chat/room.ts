@@ -12,6 +12,10 @@
 //   R2, closes sockets and calls deleteAll(): the room is gone for good.
 // - When a new message would push the room past 100 MB, the oldest messages
 //   (and their images) are deleted until it fits.
+// - The creator can make a chat persistent: no alarm, no expiry, but the cap
+//   drops to 10 MB (evicting right away if it's over). Turning it off starts
+//   a fresh 24 h from that moment. Unsent uploads older than 24 h are swept
+//   on the next upload or message, since no alarm will ever clear them.
 //
 // - The creator gets an owner token from create(). Only it — or the member
 //   who joined with it — can set a password or delete the chat (remove()
@@ -34,6 +38,7 @@ import {
   CHAT_MAX_IMAGES_PER_MESSAGE,
   CHAT_MAX_MEMBERS,
   CHAT_MAX_NICKNAME,
+  CHAT_PERSISTENT_MAX_BYTES,
   CHAT_TTL_MS,
   MAX_CONTENT_BYTES,
   MAX_TITLE_LENGTH,
@@ -66,7 +71,7 @@ export type ChatInfo = {
   title: string;
   created_at: number;
   last_message_at: number;
-  expires_at: number;
+  expires_at: number | null; // null = persistent, never deleted on its own
   bytes: number;
   max_bytes: number;
   member_count: number;
@@ -77,6 +82,7 @@ export type ChatInfo = {
   latest_seq: number;
   evicted: boolean;
   locked: boolean; // password set
+  persistent: boolean;
   owner_member_id: string | null; // the participant who created the chat, once they joined
 };
 
@@ -102,12 +108,13 @@ type RoomRow = {
   owner_hash: string | null;
   owner_member_id: string | null;
   password_hash: string | null;
+  persistent: number; // 0 | 1
 };
 // owner: the socket authenticated with the owner token (creator not joined yet).
 type Attachment = { mid: string | null; owner?: boolean };
 type Access = { member: ChatMember | null; owner: boolean };
 
-const ROOM_COLS = "slug, title, created_at, last_message_at, bytes, evicted_through, owner_hash, owner_member_id, password_hash";
+const ROOM_COLS = "slug, title, created_at, last_message_at, bytes, evicted_through, owner_hash, owner_member_id, password_hash, persistent";
 const LOCKED = "this chat is password-protected — join it with the password";
 
 const memberIdGen = customAlphabet("23456789abcdefghijkmnpqrstuvwxyz", 10);
@@ -182,13 +189,18 @@ export class ChatRoom extends DurableObject<Bindings> {
     return this.room;
   }
 
-  // Rooms created before owners and passwords existed lack the columns; they
-  // get them empty (no owner, no password).
+  // Rooms created before owners, passwords and persistence existed lack the
+  // columns; they get them empty (no owner, no password, expiring).
   private migrate(): void {
     const cols = new Set(this.sql.exec("PRAGMA table_info(room)").toArray().map((c) => String(c.name)));
     for (const col of ["owner_hash", "owner_member_id", "password_hash"]) {
       if (!cols.has(col)) this.sql.exec(`ALTER TABLE room ADD COLUMN ${col} TEXT`);
     }
+    if (!cols.has("persistent")) this.sql.exec("ALTER TABLE room ADD COLUMN persistent INTEGER NOT NULL DEFAULT 0");
+  }
+
+  private maxBytes(r: RoomRow): number {
+    return r.persistent ? CHAT_PERSISTENT_MAX_BYTES : CHAT_MAX_BYTES;
   }
 
   private memberCount(): number {
@@ -227,15 +239,16 @@ export class ChatRoom extends DurableObject<Bindings> {
       title: r.title,
       created_at: r.created_at,
       last_message_at: r.last_message_at,
-      expires_at: r.last_message_at + CHAT_TTL_MS,
+      expires_at: r.persistent ? null : r.last_message_at + CHAT_TTL_MS,
       bytes: r.bytes,
-      max_bytes: CHAT_MAX_BYTES,
+      max_bytes: this.maxBytes(r),
       member_count: this.memberCount(),
       max_members: CHAT_MAX_MEMBERS,
       oldest_seq: Number(bounds.lo),
       latest_seq: Number(bounds.hi),
       evicted: r.evicted_through > 0,
       locked: !!r.password_hash,
+      persistent: !!r.persistent,
       owner_member_id: r.owner_member_id,
     };
   }
@@ -269,7 +282,7 @@ export class ChatRoom extends DurableObject<Bindings> {
   // ---------- RPC: lifecycle ----------
 
   // Returns the owner token once; only its hash is stored.
-  async create(slug: string, title: string, password?: string): Promise<{ info: ChatInfo; ownerToken: string } | null> {
+  async create(slug: string, title: string, password?: string, persistent = false): Promise<{ info: ChatInfo; ownerToken: string } | null> {
     // Hash first: nothing may await between the "slug taken" check and the
     // schema write.
     const ownerToken = newToken("pco_");
@@ -280,7 +293,8 @@ export class ChatRoom extends DurableObject<Bindings> {
     this.sql.exec(`
       CREATE TABLE room (id INTEGER PRIMARY KEY CHECK (id = 1), slug TEXT NOT NULL, title TEXT NOT NULL,
         created_at INTEGER NOT NULL, last_message_at INTEGER NOT NULL, bytes INTEGER NOT NULL DEFAULT 0,
-        evicted_through INTEGER NOT NULL DEFAULT 0, owner_hash TEXT, owner_member_id TEXT, password_hash TEXT);
+        evicted_through INTEGER NOT NULL DEFAULT 0, owner_hash TEXT, owner_member_id TEXT, password_hash TEXT,
+        persistent INTEGER NOT NULL DEFAULT 0);
       CREATE TABLE members (id TEXT PRIMARY KEY, token_hash TEXT NOT NULL UNIQUE, nickname TEXT NOT NULL,
         kind TEXT NOT NULL, pattern TEXT NOT NULL, hue INTEGER NOT NULL, joined_at INTEGER NOT NULL);
       CREATE TABLE messages (seq INTEGER PRIMARY KEY AUTOINCREMENT, type TEXT NOT NULL, member_id TEXT NOT NULL,
@@ -289,16 +303,17 @@ export class ChatRoom extends DurableObject<Bindings> {
         height INTEGER NOT NULL, bytes INTEGER NOT NULL, created_at INTEGER NOT NULL);
     `);
     this.sql.exec(
-      "INSERT INTO room (id, slug, title, created_at, last_message_at, owner_hash, password_hash) VALUES (1, ?, ?, ?, ?, ?, ?)",
+      "INSERT INTO room (id, slug, title, created_at, last_message_at, owner_hash, password_hash, persistent) VALUES (1, ?, ?, ?, ?, ?, ?, ?)",
       slug,
       title.slice(0, MAX_TITLE_LENGTH),
       now,
       now,
       ownerHash,
       passwordHash,
+      persistent ? 1 : 0,
     );
     this.room = undefined;
-    await this.ctx.storage.setAlarm(now + CHAT_TTL_MS);
+    if (!persistent) await this.ctx.storage.setAlarm(now + CHAT_TTL_MS);
     return { info: this.info(this.load()!), ownerToken };
   }
 
@@ -311,7 +326,7 @@ export class ChatRoom extends DurableObject<Bindings> {
 
   override async alarm(): Promise<void> {
     const r = this.load();
-    if (!r) return;
+    if (!r || r.persistent) return;
     const due = r.last_message_at + CHAT_TTL_MS;
     if (Date.now() < due) {
       await this.ctx.storage.setAlarm(due);
@@ -368,6 +383,40 @@ export class ChatRoom extends DurableObject<Bindings> {
     }
     this.broadcast({ type: "settings", info });
     return { ok: true, value: info };
+  }
+
+  // Persistent: drop the alarm and squeeze the history under 10 MB. Back to
+  // expiring: the 24 h restart now, or an old chat would vanish on the spot.
+  async setPersistent(token: string, on: boolean): Promise<ChatResult<ChatInfo>> {
+    const own = await this.ownerCheck(token);
+    if (!own.ok) return own;
+    let evictedThrough = 0;
+    if (on) {
+      this.sql.exec("UPDATE room SET persistent = 1 WHERE id = 1");
+      this.room = undefined;
+      await this.ctx.storage.deleteAlarm();
+      evictedThrough = this.makeRoom(0);
+    } else if (own.value.persistent) {
+      const now = Date.now();
+      this.sql.exec("UPDATE room SET persistent = 0, last_message_at = ? WHERE id = 1", now);
+      this.room = undefined;
+      await this.ctx.storage.setAlarm(now + CHAT_TTL_MS);
+    }
+    const info = this.info(this.load()!);
+    if (evictedThrough) this.broadcast({ type: "evicted", through: evictedThrough, info });
+    this.broadcast({ type: "settings", info });
+    return { ok: true, value: info };
+  }
+
+  // Uploads that never made it into a message. Expiring chats lose them with
+  // everything else; persistent ones would keep them in R2 forever.
+  private sweepUploads(r: RoomRow): void {
+    if (!r.persistent) return;
+    const cutoff = Date.now() - CHAT_TTL_MS;
+    const stale = this.sql.exec("DELETE FROM uploads WHERE created_at < ? RETURNING name", cutoff).toArray();
+    if (!stale.length) return;
+    const keys = stale.map((u) => `chat/${r.slug}/${String(u.name)}`);
+    this.ctx.waitUntil(this.env.IMAGES.delete(keys).catch(() => {}));
   }
 
   async remove(token: string): Promise<ChatResult<{ slug: string }>> {
@@ -472,6 +521,7 @@ export class ChatRoom extends DurableObject<Bindings> {
   async canUpload(token: string): Promise<ChatResult<ChatMember>> {
     const who = await this.whoami(token);
     if (!who.ok) return who;
+    this.sweepUploads(this.load()!);
     const pending = Number(this.sql.exec("SELECT COUNT(*) AS n FROM uploads WHERE member_id = ?", who.value.id).one().n);
     if (pending >= MAX_PENDING_UPLOADS) return fail(429, "too many images waiting to be sent — send a message first");
     if (this.rateLimited(this.uploadHits, who.value.id, UPLOAD_WINDOW_MS, UPLOAD_PER_WINDOW)) return fail(429, "too many uploads, slow down");
@@ -503,6 +553,7 @@ export class ChatRoom extends DurableObject<Bindings> {
     if (!r) return fail(404, "chat not found (it may have expired)");
     const m = await this.memberByToken(token);
     if (!m) return fail(401, "invalid member token — join the chat first");
+    this.sweepUploads(r);
 
     const text = input.text === undefined || input.text === null ? "" : input.text;
     if (typeof text !== "string") return fail(400, "text must be a string");
@@ -524,6 +575,8 @@ export class ChatRoom extends DurableObject<Bindings> {
 
     const html = text.trim() ? renderMarkdown(text) : "";
     const bytes = textBytes + uploads.reduce((n, u) => n + u.bytes, 0);
+    // Only reachable in a persistent chat: 10 images × 5 MB outgrow its 10 MB.
+    if (bytes > this.maxBytes(r)) return fail(413, `message is ${(bytes / 1048576).toFixed(1)} MB — a persistent chat holds ${this.maxBytes(r) / 1048576} MB in total`);
     const evictedThrough = this.makeRoom(bytes);
 
     const now = Date.now();
@@ -542,7 +595,7 @@ export class ChatRoom extends DurableObject<Bindings> {
     this.sql.exec("UPDATE room SET last_message_at = ?, bytes = bytes + ? WHERE id = 1", now, bytes);
     this.room = undefined;
     const fresh = this.load()!;
-    await this.ctx.storage.setAlarm(now + CHAT_TTL_MS);
+    if (!fresh.persistent) await this.ctx.storage.setAlarm(now + CHAT_TTL_MS);
 
     const live = this.rowToMessage(row, "client");
     const message = format === "client" ? live : this.rowToMessage(row, "api");
@@ -557,12 +610,13 @@ export class ChatRoom extends DurableObject<Bindings> {
   // Returns the highest evicted seq, or 0 when nothing had to go.
   private makeRoom(incoming: number): number {
     const r = this.load()!;
+    const cap = this.maxBytes(r);
     let total = r.bytes;
-    if (total + incoming <= CHAT_MAX_BYTES) return 0;
+    if (total + incoming <= cap) return 0;
     const doomedKeys: string[] = [];
     let through = 0;
     for (const row of this.sql.exec("SELECT seq, images, bytes FROM messages ORDER BY seq").toArray()) {
-      if (total + incoming <= CHAT_MAX_BYTES) break;
+      if (total + incoming <= cap) break;
       total -= Number(row.bytes);
       through = Number(row.seq);
       for (const i of JSON.parse(String(row.images)) as { name: string }[]) doomedKeys.push(`chat/${r.slug}/${i.name}`);

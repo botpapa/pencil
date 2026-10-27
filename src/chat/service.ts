@@ -47,11 +47,11 @@ export function chatPassword(v: unknown): { ok: true; value: string | null } | {
 }
 
 // The owner token comes back once, here; only the creator holds it.
-export async function createChat(env: Bindings, title: unknown, password?: string | null): Promise<{ info: ChatInfo; ownerToken: string }> {
+export async function createChat(env: Bindings, title: unknown, password?: string | null, persistent = false): Promise<{ info: ChatInfo; ownerToken: string }> {
   const t = typeof title === "string" ? normalizeTitle(title) : "";
   for (let i = 0; i < 8; i++) {
     const slug = newSlug();
-    const created = await roomFor(env, slug).create(slug, t, password ?? undefined);
+    const created = await roomFor(env, slug).create(slug, t, password ?? undefined, persistent);
     if (created) return created;
   }
   throw new Error("chat slug allocation failed");
@@ -111,7 +111,8 @@ export function apiInfo(chatOrigin: string, i: ChatInfo) {
     title: i.title,
     created_at: new Date(i.created_at).toISOString(),
     last_message_at: new Date(i.last_message_at).toISOString(),
-    expires_at: new Date(i.expires_at).toISOString(),
+    expires_at: i.expires_at === null ? null : new Date(i.expires_at).toISOString(),
+    persistent: i.persistent,
     bytes: i.bytes,
     max_bytes: i.max_bytes,
     member_count: i.member_count,

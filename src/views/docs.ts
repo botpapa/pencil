@@ -193,10 +193,12 @@ Throwaway group chats for people and agents at \`https://CHAT-DEPLOYMENT\`. A
 chat is public to anyone with its link; writing needs a **member token**, which
 you get by joining with a nickname. Up to 100 participants, 100 MB per chat
 (the oldest messages are erased past that), and the whole chat is deleted
-**24 hours after its last message**.
+**24 hours after its last message** — unless it is **persistent**: then it is
+kept until deleted, holds 10 MB, and the oldest messages are erased past that.
+A persistent chat has \`"persistent": true\` and \`"expires_at": null\`.
 
 \`\`\`bash
-# start a chat ("password" is optional)
+# start a chat ("password" and "persistent" are optional)
 curl -X POST https://CHAT-DEPLOYMENT/api/chats -H "Content-Type: application/json" -d '{"title":"standup"}'
 # -> { "slug": "abc12345", "url": "https://CHAT-DEPLOYMENT/abc12345", "owner_token": "pco_…", "expires_at": "…", … }
 
@@ -232,6 +234,11 @@ creator can:
 curl -X PUT https://CHAT-DEPLOYMENT/api/chats/abc12345/password \\
   -H "Authorization: Bearer pco_…" -H "Content-Type: application/json" -d '{"password":"hunter2"}'
 
+# keep the chat until deleted (10 MB cap — anything older past that is erased
+# right away), or false to make it expire again 24 h from now
+curl -X PUT https://CHAT-DEPLOYMENT/api/chats/abc12345/persistent \\
+  -H "Authorization: Bearer pco_…" -H "Content-Type: application/json" -d '{"persistent":true}'
+
 # delete the chat with all messages, images and participants, right now
 curl -X DELETE https://CHAT-DEPLOYMENT/api/chats/abc12345 -H "Authorization: Bearer pco_…"
 \`\`\`
@@ -248,7 +255,7 @@ bad member token, \`403\` chat full, wrong password or not the creator, \`404\` 
 
 Agents can use MCP instead: the pencil.md connector below has
 \`create_chat\`, \`join_chat\`, \`read_chat_messages\`, \`send_chat_message\`,
-\`upload_chat_image\`, \`get_chat\`, \`set_chat_password\` and \`delete_chat\` next to the page and drawing tools. For
+\`upload_chat_image\`, \`get_chat\`, \`set_chat_password\`, \`set_chat_persistent\` and \`delete_chat\` next to the page and drawing tools. For
 clients that can't do OAuth, \`https://CHAT-DEPLOYMENT/mcp\` serves just the chat
 tools with no sign-in.
 

@@ -14,7 +14,7 @@ type Message = { seq: number; type: "message" | "join"; member_id: string; text:
 type Info = {
   slug: string;
   title: string;
-  expires_at: number;
+  expires_at: number | null; // null = persistent
   bytes: number;
   max_bytes: number;
   member_count: number;
@@ -23,9 +23,10 @@ type Info = {
   latest_seq: number;
   evicted: boolean;
   locked: boolean;
+  persistent: boolean;
   owner_member_id: string | null;
 };
-type Saved = { token?: string; member_id?: string; owner?: string; title: string; expires_at: number };
+type Saved = { token?: string; member_id?: string; owner?: string; title: string; expires_at: number | null };
 type ApiFail = { ok: false; status: number; error: string; passwordRequired: boolean };
 
 const STORE_KEY = "pencil-chat:v1";
@@ -85,6 +86,8 @@ function mb(n: number): string {
   if (v === 0) return "0";
   return v < 10 ? v.toFixed(1) : String(Math.round(v));
 }
+
+const PERSISTENT_TIP = "Persistent: kept until its creator deletes it. Holds 10 MB; past that, the oldest messages are erased to make room.";
 
 function clockOf(ms: number): string {
   const left = Math.max(0, ms);
@@ -193,17 +196,18 @@ function landing(): void {
   joinDialog();
   const store = loadStore();
   const now = Date.now();
-  const live = Object.entries(store).filter(([, v]) => v.expires_at > now);
+  const live = Object.entries(store).filter(([, v]) => v.expires_at === null || v.expires_at > now);
   if (live.length !== Object.keys(store).length) saveStore(Object.fromEntries(live));
   if (!live.length) return;
   const list = $("chat-recent-list");
-  live.sort((a, b) => b[1].expires_at - a[1].expires_at);
+  // Persistent chats first, then the ones with the most time left.
+  live.sort((a, b) => (b[1].expires_at ?? Infinity) - (a[1].expires_at ?? Infinity));
   list.innerHTML = live
     .map(([slug, v]) => {
-      const left = v.expires_at - now;
-      const tip = `Deleted in ${timeLeft(left)} unless someone writes. Every new message resets it to 24 hours.`;
+      const left = v.expires_at === null ? null : v.expires_at - now;
+      const tip = left === null ? PERSISTENT_TIP : `Deleted in ${timeLeft(left)} unless someone writes. Every new message resets it to 24 hours.`;
       const name = v.title ? `<span class="chat-home__list-title">${esc(v.title)}</span>` : `<span class="chat-home__list-title is-untitled">untitled · ${esc(slug)}</span>`;
-      return `<li><a href="/${esc(slug)}">${name}<span class="chat-stat" data-tip="${esc(tip)}" aria-label="${esc(tip)}">${clockOf(left)}</span></a></li>`;
+      return `<li><a href="/${esc(slug)}">${name}<span class="chat-stat" data-tip="${esc(tip)}" aria-label="${esc(tip)}">${left === null ? "∞" : clockOf(left)}</span></a></li>`;
     })
     .join("");
   $("chat-recent").hidden = false;
@@ -248,8 +252,15 @@ function room(slug: string): void {
   const ownerToken = hashOwner ?? saved?.owner;
   const persist = () => {
     const s = loadStore();
-    s[slug] = { ...(me ?? {}), ...(ownerToken ? { owner: ownerToken } : {}), title: info?.title ?? "", expires_at: info?.expires_at ?? Date.now() + 86_400_000 };
+    s[slug] = { ...(me ?? {}), ...(ownerToken ? { owner: ownerToken } : {}), title: info?.title ?? "", expires_at: info ? info.expires_at : Date.now() + 86_400_000 };
     saveStore(s);
+  };
+  // Keep "your chats" on the landing page in step with the room (persistent
+  // chats have no expiry, and every message moves it).
+  const refreshSaved = () => {
+    if (!info || !(me || ownerToken)) return;
+    const v = loadStore()[slug];
+    if (v && (v.expires_at !== info.expires_at || v.title !== info.title)) persist();
   };
   const remember = (token: string, member_id: string) => {
     me = { token, member_id };
@@ -296,7 +307,7 @@ function room(slug: string): void {
   }
 
   function evictedNote(): string {
-    return info?.evicted && messages[0]?.seq === info.oldest_seq ? `<div class="chat-sys chat-sys--note">older messages were erased to keep this chat under 100 MB</div>` : "";
+    return info?.evicted && messages[0]?.seq === info.oldest_seq ? `<div class="chat-sys chat-sys--note">older messages were erased to keep this chat under ${mb(info.max_bytes)} MB</div>` : "";
   }
 
   function renderAll(): void {
@@ -343,17 +354,23 @@ function room(slug: string): void {
 
   function renderMeta(): void {
     if (!info) return;
-    const left = Math.max(0, info.expires_at - Date.now());
     const clock = $("chat-clock");
     const size = $("chat-size");
-    clock.textContent = clockOf(left);
-    clock.dataset.tip = `Time left before this chat and everything in it is deleted (${timeLeft(left)}). Every new message resets it to 24 hours.`;
+    if (info.expires_at === null) {
+      clock.textContent = "∞";
+      clock.dataset.tip = PERSISTENT_TIP;
+    } else {
+      const left = Math.max(0, info.expires_at - Date.now());
+      clock.textContent = clockOf(left);
+      clock.dataset.tip = `Time left before this chat and everything in it is deleted (${timeLeft(left)}). Every new message resets it to 24 hours.`;
+    }
     size.textContent = `${mb(info.bytes)} / ${mb(info.max_bytes)} MB`;
     size.dataset.tip = `Space used by messages and images. A chat holds ${mb(info.max_bytes)} MB; past that, the oldest messages are erased to make room.`;
     clock.setAttribute("aria-label", clock.dataset.tip);
     size.setAttribute("aria-label", size.dataset.tip);
     $("chat-count").textContent = String(info.member_count);
     renderOwner();
+    refreshSaved();
   }
 
   function renderOwner(): void {
@@ -774,7 +791,30 @@ function room(slug: string): void {
       : "Off — anyone with the link can read and join. With a password, only participants can read.";
     $("chat-pass-save").textContent = on ? "change" : "set";
     $("chat-pass-remove").hidden = !on;
+    const kept = !!info?.persistent;
+    $("chat-keep-note").textContent = kept
+      ? "On — the chat stays until you delete it. It holds 10 MB; past that, the oldest messages and images are erased."
+      : `Off — deleted 24 hours after the last message, holds 100 MB. Turning it on keeps it for good but caps it at 10 MB${info && info.bytes > 10 * 1048576 ? ` — this chat uses ${mb(info.bytes)} MB, so the oldest messages will be erased right away` : ""}.`;
+    $("chat-keep-toggle").textContent = kept ? "let it expire" : "keep forever";
     settingsErr.hidden = true;
+  }
+
+  async function savePersistent(persistent: boolean): Promise<void> {
+    const r = await api<Info & { password_protected: boolean; older_messages_evicted: boolean }>(`/api/chats/${slug}/persistent`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${ownerCred()}` },
+      body: JSON.stringify({ persistent }),
+    });
+    if (!r.ok) {
+      if (r.status === 404) return markGone();
+      return settingsError(r.error);
+    }
+    // The API speaks ISO dates; the live "settings" event carries the same
+    // change in client shape and redraws the rest.
+    if (info) info = { ...info, persistent: r.data.persistent, max_bytes: r.data.max_bytes, bytes: r.data.bytes, expires_at: r.data.expires_at === null ? null : Date.parse(String(r.data.expires_at)) };
+    renderSettings();
+    renderMeta();
+    toast(persistent ? "chat kept for good — 10 MB max" : "chat expires again 24 h after the last message");
   }
 
   function settingsError(msg: string): void {
@@ -813,6 +853,7 @@ function room(slug: string): void {
     if (passInput.value) void savePassword(passInput.value);
   });
   $("chat-pass-remove").addEventListener("click", () => void savePassword(null));
+  $("chat-keep-toggle").addEventListener("click", () => void savePersistent(!info?.persistent));
   deleteBtn.addEventListener("click", async () => {
     // Two clicks: the first arms the button for a few seconds.
     if (!deleteArmed) {

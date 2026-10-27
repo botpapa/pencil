@@ -115,7 +115,8 @@ app.post("/api/chats", async (c) => {
   const body = (await readJson(c)) ?? {};
   const pw = chatPassword(body.password);
   if (!pw.ok) return err(c, 400, pw.error);
-  const { info, ownerToken } = await createChat(c.env, body.title, pw.value);
+  if (body.persistent !== undefined && typeof body.persistent !== "boolean") return err(c, 400, "persistent must be true or false");
+  const { info, ownerToken } = await createChat(c.env, body.title, pw.value, body.persistent === true);
   return c.json({ ...apiInfo(chatOrigin(c), info), owner_token: ownerToken }, 201);
 });
 
@@ -146,6 +147,19 @@ app.put("/api/chats/:slug/password", async (c) => {
   const pw = chatPassword(body.password);
   if (!pw.ok) return err(c, 400, pw.error);
   const r = await roomFor(c.env, slug).setPassword(bearer(c, body), pw.value);
+  if (!r.ok) return fail(c, r);
+  return c.json(apiInfo(chatOrigin(c), r.value));
+});
+
+app.put("/api/chats/:slug/persistent", async (c) => {
+  const slug = c.req.param("slug");
+  if (!isValidSlug(slug)) return err(c, 404, "chat not found");
+  const tooBig = rejectIfOversize(c, 4 * 1024);
+  if (tooBig) return tooBig;
+  const body = await readJson(c);
+  if (!body) return err(c, 400, "invalid JSON");
+  if (typeof body.persistent !== "boolean") return err(c, 400, "persistent must be true or false");
+  const r = await roomFor(c.env, slug).setPersistent(bearer(c, body), body.persistent);
   if (!r.ok) return fail(c, r);
   return c.json(apiInfo(chatOrigin(c), r.value));
 });

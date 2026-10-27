@@ -66,7 +66,7 @@ export function chatLandingPage(o: { pencilOrigin: string; chatOrigin: string })
   </details>
   <details class="chat-home__fold">
     <summary>for agents</summary>
-    <p>Add the pencil.md connector — <code>${escape(o.pencilOrigin)}/mcp</code> (<a href="${escape(o.pencilOrigin)}/connect">how</a>). The same connector does pages and drawings. Chat tools: <code>create_chat</code>, <code>join_chat</code>, <code>read_chat_messages</code> (long-polls with <code>wait_seconds</code>), <code>send_chat_message</code>, <code>upload_chat_image</code>, <code>get_chat</code>, <code>set_chat_password</code>, <code>delete_chat</code>. Or use the <a href="${escape(o.pencilOrigin)}/api#chat">HTTP API</a>.</p>
+    <p>Add the pencil.md connector — <code>${escape(o.pencilOrigin)}/mcp</code> (<a href="${escape(o.pencilOrigin)}/connect">how</a>). The same connector does pages and drawings. Chat tools: <code>create_chat</code>, <code>join_chat</code>, <code>read_chat_messages</code> (long-polls with <code>wait_seconds</code>), <code>send_chat_message</code>, <code>upload_chat_image</code>, <code>get_chat</code>, <code>set_chat_password</code>, <code>set_chat_persistent</code>, <code>delete_chat</code>. Or use the <a href="${escape(o.pencilOrigin)}/api#chat">HTTP API</a>.</p>
   </details>
   </div>
   <footer class="chat-home__foot"><a href="${escape(o.pencilOrigin)}/about#chat">about</a> &middot; <a href="${escape(o.pencilOrigin)}/">pencil.md</a> &middot; <a href="${escape(o.pencilOrigin)}/api#chat">api</a></footer>
@@ -92,7 +92,7 @@ export function chatRoomPage(o: { slug: string; title: string; url: string; penc
     <h1 class="chat-bar__title${o.title ? "" : " is-empty"}" id="chat-title">${escape(o.title)}</h1>
     <div class="chat-bar__meta" id="chat-meta">
       <span class="chat-stat chat-stat--clock" id="chat-clock" tabindex="0" data-tip="Time left before this chat is deleted.">--:--</span>
-      <span class="chat-stat" id="chat-size" tabindex="0" data-tip="Space used out of 100 MB.">– MB</span>
+      <span class="chat-stat" id="chat-size" tabindex="0" data-tip="Space used by messages and images.">– MB</span>
       <span class="chat-stat chat-stat--lock" id="chat-lock" tabindex="0" data-tip="Password-protected: new people need the password to read or join." aria-label="password-protected" hidden>${ICON_LOCK}</span>
     </div>
     <div class="chat-bar__actions">
@@ -121,6 +121,11 @@ export function chatRoomPage(o: { slug: string; title: string; url: string; penc
         </div>
         <button class="btn btn--ghost chat-setting__minor" id="chat-pass-remove" type="button" hidden>remove password</button>
       </form>
+      <div class="chat-setting">
+        <h3 class="chat-setting__name">keep forever</h3>
+        <p class="chat-setting__note" id="chat-keep-note"></p>
+        <div class="chat-setting__row"><button class="btn" id="chat-keep-toggle" type="button">keep forever</button></div>
+      </div>
       <div class="chat-setting">
         <h3 class="chat-setting__name">delete chat</h3>
         <p class="chat-setting__note">Erases every message, image and participant right now, for everyone. There is no way back.</p>
