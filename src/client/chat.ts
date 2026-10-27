@@ -75,6 +75,10 @@ function esc(s: string): string {
   return s.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#39;");
 }
 
+function reEsc(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 function randomAvatar(): Avatar {
   const r = new Uint32Array(2);
   crypto.getRandomValues(r);
@@ -302,8 +306,44 @@ function room(slug: string): void {
           .map((i) => `<a href="${esc(i.path)}" target="_blank" rel="noopener"><img src="${esc(i.path)}" width="${i.width || ""}" height="${i.height || ""}" loading="lazy" alt=""></a>`)
           .join("")}</div>`
       : "";
-    const body = m.html ? `<div class="msg__text prose">${m.html}</div>` : "";
+    const body = m.html ? `<div class="msg__text prose">${mentionize(m.html)}</div>` : "";
     return `${day}<article class="msg${cont ? " msg--cont" : ""}${mine}" data-seq="${m.seq}"><div class="msg__avatar">${cont || !who ? "" : avatarSvg(who, 36)}</div><div class="msg__main">${head}${body}${imgs}</div></article>`;
+  }
+
+  // @mentions are plain text: highlight "@nickname" for anyone in the member
+  // list (longest name first, since nicknames may contain spaces), skipping
+  // code and links. A mention of you gets its own colour.
+  const WORD = "[\\p{L}\\p{N}_]";
+  function mentionize(html: string): string {
+    if (!html.includes("@") || !members.size) return html;
+    const names = [...new Set([...members.values()].map((m) => m.nickname))].sort((a, b) => b.length - a.length);
+    const re = new RegExp(`(?<!${WORD})@(${names.map(reEsc).join("|")})(?!${WORD})`, "giu");
+    const mine = me ? members.get(me.member_id)?.nickname.toLowerCase() : undefined;
+    const tpl = document.createElement("template");
+    tpl.innerHTML = html;
+    const walker = document.createTreeWalker(tpl.content, NodeFilter.SHOW_TEXT);
+    const hits: Text[] = [];
+    while (walker.nextNode()) {
+      const t = walker.currentNode as Text;
+      if (t.data.includes("@") && !t.parentElement?.closest("code, pre, a")) hits.push(t);
+    }
+    if (!hits.length) return html;
+    for (const t of hits) {
+      const frag = document.createDocumentFragment();
+      let last = 0;
+      for (const m of t.data.matchAll(re)) {
+        frag.appendChild(document.createTextNode(t.data.slice(last, m.index)));
+        const span = document.createElement("span");
+        span.className = m[1]!.toLowerCase() === mine ? "mention mention--me" : "mention";
+        span.textContent = m[0];
+        frag.appendChild(span);
+        last = m.index! + m[0].length;
+      }
+      if (!last) continue;
+      frag.appendChild(document.createTextNode(t.data.slice(last)));
+      t.replaceWith(frag);
+    }
+    return tpl.innerHTML;
   }
 
   function evictedNote(): string {
@@ -688,8 +728,106 @@ function room(slug: string): void {
       wsSend({ type: "typing" });
     }
   });
+  // ----- composer: @mention picker -----
+
+  const mentionBox = $("chat-mention");
+  let mentionHits: Member[] = [];
+  let mentionSel = 0;
+  let mentionAt = -1;
+  let mentionDismissed = -1; // the "@" the user closed the picker on
+
+  // The "@query" right before the caret, if the caret sits in one.
+  function mentionQuery(): { at: number; q: string } | null {
+    const pos = text.selectionStart;
+    if (pos !== text.selectionEnd) return null;
+    const before = text.value.slice(0, pos);
+    const at = before.lastIndexOf("@");
+    if (at < 0 || (at > 0 && new RegExp(WORD, "u").test(before[at - 1]!))) return null;
+    const q = before.slice(at + 1);
+    if (q.length > 32 || q.includes("\n")) return null;
+    return { at, q };
+  }
+
+  function closeMention(): void {
+    mentionBox.hidden = true;
+    mentionHits = [];
+    mentionAt = -1;
+  }
+
+  function renderMention(): void {
+    const mq = me ? mentionQuery() : null;
+    if (!mq || mq.at === mentionDismissed) return closeMention();
+    const q = mq.q.toLowerCase();
+    const hits = [...members.values()]
+      .filter((m) => m.id !== me?.member_id && m.nickname.toLowerCase().includes(q))
+      .sort(
+        (a, b) =>
+          Number(b.nickname.toLowerCase().startsWith(q)) - Number(a.nickname.toLowerCase().startsWith(q)) ||
+          Number(online.has(b.id)) - Number(online.has(a.id)) ||
+          a.nickname.localeCompare(b.nickname),
+      )
+      .slice(0, 8);
+    // Already typed out in full: nothing left to pick.
+    if (!hits.length || (hits.length === 1 && hits[0]!.nickname.toLowerCase() === q)) return closeMention();
+    if (mq.at !== mentionAt || mentionSel >= hits.length) mentionSel = 0;
+    mentionAt = mq.at;
+    mentionHits = hits;
+    mentionBox.innerHTML = hits
+      .map(
+        (m, i) =>
+          `<li role="option" data-i="${i}" aria-selected="${i === mentionSel}">${avatarSvg(m, 20)}<span class="chat-people__name">${esc(m.nickname)}</span>${m.kind === "agent" ? `<span class="msg__badge">agent</span>` : ""}</li>`,
+      )
+      .join("");
+    mentionBox.hidden = false;
+  }
+
+  function pickMention(i: number): void {
+    const m = mentionHits[i];
+    if (!m || mentionAt < 0) return;
+    const pos = text.selectionStart;
+    const ins = `@${m.nickname} `;
+    text.setRangeText(ins, mentionAt, pos, "end");
+    closeMention();
+    autosize();
+    syncSend();
+    text.focus();
+  }
+
+  text.addEventListener("input", () => {
+    if (mentionDismissed >= 0 && text.value[mentionDismissed] !== "@") mentionDismissed = -1;
+    renderMention();
+  });
+  text.addEventListener("click", renderMention);
+  text.addEventListener("keyup", (e) => {
+    if (["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) renderMention();
+  });
+  text.addEventListener("blur", closeMention);
+  mentionBox.addEventListener("mousedown", (e) => {
+    const li = (e.target as Element).closest?.("li[data-i]") as HTMLElement | null;
+    if (!li) return;
+    e.preventDefault(); // keep focus in the textarea
+    pickMention(Number(li.dataset.i));
+  });
+
   const coarse = window.matchMedia("(pointer: coarse)").matches;
   text.addEventListener("keydown", (e) => {
+    if (!mentionBox.hidden && mentionHits.length && !e.isComposing) {
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        e.preventDefault();
+        mentionSel = (mentionSel + (e.key === "ArrowDown" ? 1 : -1) + mentionHits.length) % mentionHits.length;
+        mentionBox.querySelectorAll("li").forEach((li, i) => li.setAttribute("aria-selected", String(i === mentionSel)));
+        return;
+      }
+      if (e.key === "Enter" || e.key === "Tab") {
+        e.preventDefault();
+        return pickMention(mentionSel);
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        mentionDismissed = mentionAt;
+        return closeMention();
+      }
+    }
     if (e.key === "Enter" && !e.shiftKey && !e.isComposing && !coarse) {
       e.preventDefault();
       compose.requestSubmit();

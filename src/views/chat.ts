@@ -151,6 +151,7 @@ export function chatRoomPage(o: { slug: string; title: string; url: string; penc
     </form>
     <form class="chat-compose" id="chat-compose" hidden>
       <div class="chat-compose__files" id="chat-files" hidden></div>
+      <ul class="chat-mention" id="chat-mention" role="listbox" aria-label="mention someone" hidden></ul>
       <div class="chat-compose__row">
         <label class="chat-icon-btn chat-attach" title="add images" aria-label="add images">${ICON_IMAGE}<input id="chat-file" type="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden></label>
         <textarea class="chat-compose__text" id="chat-text" rows="1" placeholder="message — markdown works" aria-label="message"></textarea>

@@ -423,6 +423,30 @@
 .chat-stat--lock[hidden] { display: none; }
 .chat-join__input:focus, .chat-compose__text:focus { outline: none; border-color: var(--ink-soft); }
 
+.chat-compose { position: relative; }
+.chat-mention {
+  position: absolute;
+  bottom: calc(100% + 0.4rem);
+  left: 2.6rem;
+  z-index: 20;
+  width: min(18rem, calc(100% - 2.6rem));
+  max-height: 16rem;
+  overflow: auto;
+  list-style: none;
+  margin: 0;
+  padding: 0.3rem 0;
+  background: var(--bg);
+  border-radius: 8px;
+  box-shadow: 0 10px 30px rgba(20, 17, 13, 0.14), 0 1px 3px rgba(20, 17, 13, 0.1);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.chat-mention[hidden] { display: none; }
+.chat-mention li { display: flex; align-items: center; gap: 0.5rem; padding: 0.35rem 0.8rem; cursor: pointer; }
+.chat-mention li[aria-selected="true"] { background: var(--bg-soft); }
+.mention { background: var(--bg-soft); border-radius: 3px; padding: 0 0.15em; font-weight: 600; }
+.mention--me { background: color-mix(in srgb, var(--accent) 35%, transparent); }
+
 .chat-compose__row { display: flex; gap: 0.35rem; align-items: flex-end; }
 .chat-compose__text {
   font-family: var(--font-serif);
